@@ -51,8 +51,8 @@ class TtsManager(
 
     // 在线音频播放器
     private var mediaPlayer: MediaPlayer? = null
-    // 当前播放在线流的会话标记（每次新播放递增，防止异步重入/竞态）
-    private var onlineSessionId: Long = 0L
+    // 当前朗读全局会话 ID（每次新发音/停止递增，防止异步竞态与过期回调）
+    private var currentSessionId: Long = 0L
 
     // 语速设置 (0.5f ~ 2.0f，默认 1.0f)
     var speechRate: Float = 1.0f
@@ -71,7 +71,18 @@ class TtsManager(
     // 暂存待播放的请求 (若初始化较慢时触发)
     private var pendingRequest: PendingSpeakRequest? = null
 
+    // 本地发音活跃会话（用于 onError 降级与看门狗）
+    private var activeLocalSession: ActiveSpeakSession? = null
+    private var watchdogRunnable: Runnable? = null
+
     private data class PendingSpeakRequest(
+        val text: String,
+        val language: Language,
+        val onError: ((String) -> Unit)?
+    )
+
+    private data class ActiveSpeakSession(
+        val sessionId: Long,
         val text: String,
         val language: Language,
         val onError: ((String) -> Unit)?
@@ -93,23 +104,26 @@ class TtsManager(
 
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(utteranceId: String?) {
+                    // 本地引擎已真正开始发声，取消假死看门狗
+                    cancelWatchdog()
                     _isSpeaking.value = true
                 }
 
                 override fun onDone(utteranceId: String?) {
-                    // 若分片全部播完（仅在末尾分片或唯一分片时），重置朗读状态
+                    cancelWatchdog()
                     if (utteranceId?.endsWith("_last") == true) {
                         _isSpeaking.value = false
+                        activeLocalSession = null
                     }
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
-                    _isSpeaking.value = false
+                    handleLocalTtsError()
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
-                    _isSpeaking.value = false
+                    handleLocalTtsError()
                 }
             })
 
@@ -129,6 +143,49 @@ class TtsManager(
     }
 
     /**
+     * 当本地 TTS 引擎在合成或发音过程中报错时，立即无缝降级走在线网络发音
+     */
+    private fun handleLocalTtsError() {
+        cancelWatchdog()
+        val session = activeLocalSession ?: run {
+            _isSpeaking.value = false
+            return
+        }
+        activeLocalSession = null
+
+        mainHandler.post {
+            if (session.sessionId == currentSessionId) {
+                // 本地引擎异步失败，无缝降级在线网络发音
+                speakOnline(session.text, session.language, session.onError)
+            }
+        }
+    }
+
+    /**
+     * 启动本地 TTS 假死监控看门狗 (800ms)
+     * 若部分国内厂商 ROM 的 TTS 假死未报错也未回调 onStart，看门狗自动介入无缝切换在线发音
+     */
+    private fun startWatchdog(session: ActiveSpeakSession) {
+        cancelWatchdog()
+        val runnable = Runnable {
+            if (session.sessionId == currentSessionId && _isSpeaking.value) {
+                try {
+                    tts?.stop()
+                } catch (_: Exception) {}
+                activeLocalSession = null
+                speakOnline(session.text, session.language, session.onError)
+            }
+        }
+        watchdogRunnable = runnable
+        mainHandler.postDelayed(runnable, 800)
+    }
+
+    private fun cancelWatchdog() {
+        watchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+        watchdogRunnable = null
+    }
+
+    /**
      * 播放文本语音朗读（本地 TTS + 在线网络发音双模兜底）
      *
      * @param text 待朗读文本
@@ -141,6 +198,8 @@ class TtsManager(
 
         // 停止之前的播放
         stop()
+
+        val sessionId = ++currentSessionId
 
         // 检查媒体音量与静音状态，友好提示
         checkVolumeAndNotify(onError)
@@ -210,6 +269,10 @@ class TtsManager(
         val chunks = splitTextIntoChunks(cleanText, 500)
         _isSpeaking.value = true
 
+        val session = ActiveSpeakSession(sessionId, cleanText, language, onError)
+        activeLocalSession = session
+        startWatchdog(session)
+
         val baseUtteranceId = "tts_${System.currentTimeMillis()}"
         var hasError = false
         chunks.forEachIndexed { index, chunk ->
@@ -227,7 +290,8 @@ class TtsManager(
         }
 
         if (hasError) {
-            // 本地 speak 调用返回 ERROR，立即切换到在线网络发音
+            cancelWatchdog()
+            activeLocalSession = null
             _isSpeaking.value = false
             speakOnline(cleanText, language, onError)
         }
@@ -240,7 +304,10 @@ class TtsManager(
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return
 
-        val sessionId = ++onlineSessionId
+        val sessionId = ++currentSessionId
+        cancelWatchdog()
+        activeLocalSession = null
+
         val chunks = splitTextIntoChunks(cleanText, 150)
         if (chunks.isEmpty()) return
 
@@ -255,7 +322,7 @@ class TtsManager(
         language: Language,
         onError: ((String) -> Unit)?
     ) {
-        if (sessionId != onlineSessionId) return
+        if (sessionId != currentSessionId) return
 
         if (chunkIndex >= chunks.size) {
             _isSpeaking.value = false
@@ -282,12 +349,13 @@ class TtsManager(
         language: Language,
         onError: ((String) -> Unit)?
     ) {
-        if (sessionId != onlineSessionId) return
+        if (sessionId != currentSessionId) return
 
         if (sourceIndex >= candidateUrls.size) {
             // 当前切片的所有音频源均失败
             if (chunkIndex == 0) {
                 _isSpeaking.value = false
+                safeReleasePlayer()
                 onError?.invoke("网络发音暂不可用，请检查网络连接")
             } else {
                 playOnlineChunk(chunks, chunkIndex + 1, sessionId, language, onError)
@@ -298,58 +366,77 @@ class TtsManager(
         val url = candidateUrls[sourceIndex]
 
         mainHandler.post {
-            if (sessionId != onlineSessionId) return@post
+            if (sessionId != currentSessionId) return@post
 
+            safeReleasePlayer()
             try {
-                mediaPlayer?.release()
-                mediaPlayer = MediaPlayer().apply {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                        setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                .build()
-                        )
-                    } else {
-                        @Suppress("DEPRECATION")
-                        setAudioStreamType(AudioManager.STREAM_MUSIC)
-                    }
+                val player = MediaPlayer()
+                mediaPlayer = player
 
-                    val headers = mapOf(
-                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    player.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
                     )
-                    setDataSource(context.applicationContext, Uri.parse(url), headers)
+                } else {
+                    @Suppress("DEPRECATION")
+                    player.setAudioStreamType(AudioManager.STREAM_MUSIC)
+                }
 
-                    setOnPreparedListener { mp ->
-                        if (sessionId == onlineSessionId) {
-                            try {
-                                mp.start()
-                                _isSpeaking.value = true
-                            } catch (_: Exception) {
-                                tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
-                            }
-                        }
-                    }
+                val headers = mapOf(
+                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                )
+                player.setDataSource(context.applicationContext, Uri.parse(url), headers)
 
-                    setOnCompletionListener {
-                        if (sessionId == onlineSessionId) {
-                            playOnlineChunk(chunks, chunkIndex + 1, sessionId, language, onError)
-                        }
-                    }
-
-                    setOnErrorListener { _, _, _ ->
-                        if (sessionId == onlineSessionId) {
+                player.setOnPreparedListener { mp ->
+                    if (sessionId == currentSessionId && mediaPlayer === mp) {
+                        try {
+                            mp.start()
+                            _isSpeaking.value = true
+                        } catch (_: Exception) {
                             tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
                         }
-                        true
                     }
-
-                    prepareAsync()
                 }
+
+                player.setOnCompletionListener { mp ->
+                    if (sessionId == currentSessionId && mediaPlayer === mp) {
+                        playOnlineChunk(chunks, chunkIndex + 1, sessionId, language, onError)
+                    }
+                }
+
+                player.setOnErrorListener { mp, _, _ ->
+                    if (sessionId == currentSessionId && mediaPlayer === mp) {
+                        tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
+                    }
+                    true
+                }
+
+                player.prepareAsync()
             } catch (_: Exception) {
                 tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
             }
         }
+    }
+
+    /**
+     * 安全解绑监听并释放 MediaPlayer
+     */
+    private fun safeReleasePlayer() {
+        val player = mediaPlayer ?: return
+        mediaPlayer = null
+        try {
+            player.setOnPreparedListener(null)
+            player.setOnCompletionListener(null)
+            player.setOnErrorListener(null)
+            if (player.isPlaying) {
+                player.stop()
+            }
+            player.reset()
+            player.release()
+        } catch (_: Exception) {}
     }
 
     /**
@@ -372,19 +459,16 @@ class TtsManager(
      */
     fun stop() {
         pendingRequest = null
-        onlineSessionId++ // 使正在等待的在线切片和回调失效
+        currentSessionId++ // 使正在等待的在线切片和回调失效
+        cancelWatchdog()
+        activeLocalSession = null
 
         try {
             tts?.stop()
         } catch (_: Exception) {}
 
         mainHandler.post {
-            try {
-                if (mediaPlayer?.isPlaying == true) {
-                    mediaPlayer?.stop()
-                }
-                mediaPlayer?.reset()
-            } catch (_: Exception) {}
+            safeReleasePlayer()
         }
 
         _isSpeaking.value = false
@@ -402,10 +486,7 @@ class TtsManager(
         isInitialized = false
 
         mainHandler.post {
-            try {
-                mediaPlayer?.release()
-            } catch (_: Exception) {}
-            mediaPlayer = null
+            safeReleasePlayer()
         }
     }
 
@@ -413,12 +494,18 @@ class TtsManager(
      * 根据语言模型与文本内容智能匹配最佳发音 Locale
      */
     private fun resolveLocale(text: String, language: Language): Locale {
-        if (language.ttsLocale != null) {
-            return language.ttsLocale
+        val effectiveLang = if (language == Language.AUTO) {
+            Language.detectLanguage(text)
+        } else {
+            language
+        }
+
+        if (effectiveLang.ttsLocale != null) {
+            return effectiveLang.ttsLocale
         }
 
         // 精确匹配语种代码
-        when (language.code.lowercase()) {
+        when (effectiveLang.code.lowercase()) {
             "zh", "zh-cn", "zh-hans" -> return Locale.SIMPLIFIED_CHINESE
             "cht", "zh-tw", "zh-hk", "zh-hant" -> return Locale.TRADITIONAL_CHINESE
             "en", "en-us", "en-gb" -> return Locale.US
@@ -434,22 +521,6 @@ class TtsManager(
             "th" -> return Locale("th", "TH")
             "ar" -> return Locale("ar")
         }
-
-        // 若为 auto 自动识别，根据文本字符集推断语种
-        val hasChinese = text.any { it.code in 0x4E00..0x9FA5 }
-        if (hasChinese) return Locale.SIMPLIFIED_CHINESE
-
-        val hasJapanese = text.any { it.code in 0x3040..0x30FF }
-        if (hasJapanese) return Locale.JAPANESE
-
-        val hasKorean = text.any { it.code in 0xAC00..0xD7AF }
-        if (hasKorean) return Locale.KOREAN
-
-        val hasCyrillic = text.any { it.code in 0x0400..0x04FF }
-        if (hasCyrillic) return Locale("ru", "RU")
-
-        val hasArabic = text.any { it.code in 0x0600..0x06FF }
-        if (hasArabic) return Locale("ar")
 
         return Locale.US
     }
@@ -478,14 +549,16 @@ class TtsManager(
             } catch (_: Exception) {
                 clean
             }
-            val googleLang = GoogleTranslationEngine.toGoogleLanguageCode(language)
+            val targetLang = if (language == Language.AUTO) Language.detectLanguage(clean) else language
+            val googleLang = GoogleTranslationEngine.toGoogleLanguageCode(targetLang)
 
-            // 1. 有道词典在线发音（短词/短语，不超过 2 个单词且字符数 <= 25，国内免梯子直连秒开）
-            val wordCount = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }.size
-            val isShortWord = wordCount <= 2 && clean.length <= 25
+            // 1. 有道词典在线发音（仅支持短词/短语，不超过 2 个单词且字符数 <= 25 且无长句标点，国内免梯子秒开）
+            val hasSentencePunct = clean.any { it in "。！？!?；;，,……\n" }
+            val words = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }
+            val isShortWord = !hasSentencePunct && words.size <= 2 && clean.length <= 25
 
             if (isShortWord) {
-                when (language.code.lowercase()) {
+                when (targetLang.code.lowercase()) {
                     "en" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&type=2")
                     "zh", "zh-cn" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=zh")
                     "ja" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=jap")
@@ -499,17 +572,8 @@ class TtsManager(
                 urls.add("$trimmedProxy/api/tts?text=$encoded&lang=$googleLang")
             }
 
-            // 3. Google 官方公开免 Key TTS 音频流 (全语种长句直连)
+            // 3. Google 官方公开免 Key TTS 音频流 (全语种长句直连备用)
             urls.add("https://translate.google.com/translate_tts?ie=UTF-8&tl=$googleLang&client=tw-ob&q=$encoded")
-
-            // 4. 若为短文本外的中英文，兜底追加有道发音
-            if (!isShortWord) {
-                if (language.code.lowercase().startsWith("en")) {
-                    urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&type=2")
-                } else if (language.code.lowercase().startsWith("zh")) {
-                    urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=zh")
-                }
-            }
 
             return urls
         }
@@ -530,12 +594,27 @@ class TtsManager(
                 val isPunctuation = ch in "。！？!?；;…\n"
 
                 // 遇到断句标点且累积长度达到合适规模，或者单段逼近 maxChunkSize 时切分
-                if ((isPunctuation && sb.length >= 80) || sb.length >= maxChunkSize) {
-                    val part = sb.toString().trim()
-                    if (part.isNotEmpty()) {
-                        chunks.add(part)
+                if ((isPunctuation && sb.length >= 60) || sb.length >= maxChunkSize) {
+                    val currentStr = sb.toString()
+                    if (isPunctuation || sb.length < maxChunkSize) {
+                        val part = currentStr.trim()
+                        if (part.isNotEmpty()) chunks.add(part)
+                        sb.clear()
+                    } else {
+                        // 超过最大长度但没有句子结束标点：寻找最近的逗号、空格等边界，避免切断单词
+                        val lastBreak = currentStr.lastIndexOfAny(charArrayOf(' ', ',', '，', '、', '\t'))
+                        if (lastBreak > 20) {
+                            val part = currentStr.substring(0, lastBreak).trim()
+                            if (part.isNotEmpty()) chunks.add(part)
+                            val remainder = currentStr.substring(lastBreak).trimStart()
+                            sb.clear()
+                            sb.append(remainder)
+                        } else {
+                            val part = currentStr.trim()
+                            if (part.isNotEmpty()) chunks.add(part)
+                            sb.clear()
+                        }
                     }
-                    sb.clear()
                 }
             }
 

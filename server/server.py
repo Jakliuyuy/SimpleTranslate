@@ -158,8 +158,28 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, Range")
+        self.end_headers()
+
+    def do_HEAD(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path.rstrip("/")
+        if path in ("", "/health"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
+        if path == "/api/tts":
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Accept-Ranges", "bytes")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
     def do_GET(self):

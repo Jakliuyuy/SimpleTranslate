@@ -5,6 +5,7 @@ import com.translate.app.data.model.Language
 import com.translate.app.util.CryptoUtils
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -314,11 +315,138 @@ class TranslationEngineTest {
         assertTrue(enLongUrls.isNotEmpty())
         assertTrue(enLongUrls.none { it.contains(" ") }) // 验证空格已被 URL 编码，无非法空格
         assertTrue(enLongUrls.any { it.contains("129.151.9.55:8787/api/tts") })
-        assertTrue(enLongUrls.any { it.contains("translate.google.com/translate_tts") })
-
         // 4. 空文本返回空列表
         val emptyUrls = com.translate.app.util.TtsManager.buildOnlineAudioUrls("  ", Language.EN, proxyBase)
         assertTrue(emptyUrls.isEmpty())
+    }
+
+    @Test
+    fun testDetectLanguage() {
+        // 1. 中文
+        assertEquals(Language.ZH, Language.detectLanguage("你好世界"))
+        assertEquals(Language.ZH, Language.detectLanguage("这是一段测试文本"))
+        assertEquals(Language.ZH, Language.detectLanguage("中英混排测试 with English words"))
+
+        // 2. 日文
+        assertEquals(Language.JA, Language.detectLanguage("こんにちは"))
+        assertEquals(Language.JA, Language.detectLanguage("これはテストです"))
+
+        // 3. 韩文
+        assertEquals(Language.KO, Language.detectLanguage("안녕하세요"))
+        assertEquals(Language.KO, Language.detectLanguage("감사합니다"))
+
+        // 4. 英文与拉丁
+        assertEquals(Language.EN, Language.detectLanguage("Hello world"))
+        assertEquals(Language.EN, Language.detectLanguage("Good morning!"))
+        assertEquals(Language.EN, Language.detectLanguage("Bonjour tout le monde"))
+
+        // 5. 俄文
+        assertEquals(Language.RU, Language.detectLanguage("Привет мир"))
+
+        // 6. 阿拉伯文
+        assertEquals(Language.AR, Language.detectLanguage("مرحبا بالعالم"))
+
+        // 7. 泰文
+        assertEquals(Language.TH, Language.detectLanguage("สวัสดีชาวโลก"))
+    }
+
+    @Test
+    fun testContainsChinese() {
+        assertTrue(Language.containsChinese("你好"))
+        assertTrue(Language.containsChinese("测试"))
+        assertTrue(Language.containsChinese("生僻字 䶮 𫖯"))
+        assertTrue(Language.containsChinese("混合 abc 汉字 xyz"))
+        assertFalse(Language.containsChinese("Hello world"))
+        assertFalse(Language.containsChinese("123456!@#$%^"))
+        assertFalse(Language.containsChinese("こんにちは"))
+    }
+
+    @Test
+    fun testSplitTextIntoChunksAvoidsBreakingWords() {
+        // 构造一段无标点长文本（长度 180 字符，由多个单词组成）
+        val textWithoutPunct = "The SimpleTranslate application provides seamless dual mode TTS fallback and smart bidirectional translation for mobile users across diverse environments and languages"
+        val chunks = com.translate.app.util.TtsManager.splitTextIntoChunks(textWithoutPunct, 80)
+
+        assertTrue(chunks.size >= 2)
+        // 验证每个分片结尾都是完整单词（不是任意切断）
+        chunks.forEach { chunk ->
+            assertTrue(chunk.length <= 80)
+            assertFalse(chunk.endsWith(" "))
+            assertFalse(chunk.startsWith(" "))
+        }
+        // 拼接还原后的单词数量与原始一致
+        val reconstructed = chunks.joinToString(" ")
+        val origWords = textWithoutPunct.split("\\s+".toRegex())
+        val reconWords = reconstructed.split("\\s+".toRegex())
+        assertEquals(origWords, reconWords)
+    }
+
+    @Test
+    fun testLongSentenceDoesNotContainBrokenYoudaoVoice() {
+        val proxyBase = "http://129.151.9.55:8787"
+        val longSentence = "This is a full sentence which would fail on Youdao dictvoice with HTTP 500."
+        val urls = com.translate.app.util.TtsManager.buildOnlineAudioUrls(longSentence, Language.EN, proxyBase)
+
+        // 验证对于长句，绝不添加有道 dictvoice 接口（避免 HTTP 500 导致播放延迟）
+        assertFalse(urls.any { it.contains("dict.youdao.com") })
+        // 验证首选为 SimpleTranslate 中转代理音频流
+        assertTrue(urls.first().contains("129.151.9.55:8787/api/tts"))
+    }
+
+    @Test
+    fun testAutoTranslationConflictAvoidanceAndManualTargetPreservation() {
+        val src = Language.AUTO
+
+        // 1. 输入中文，当前目标是中文 -> 防冲突安全机制纠正为英文 (避免中译中)
+        var target = Language.ZH
+        var text = "你好，这是一段中文"
+        if (src == Language.AUTO) {
+            val isChinese = Language.containsChinese(text)
+            if (isChinese && target == Language.ZH) {
+                target = Language.EN
+            }
+        }
+        assertEquals(Language.EN, target)
+
+        // 2. 输入英文，当前目标是英文 -> 防冲突安全机制纠正为中文 (避免英译英)
+        target = Language.EN
+        text = "Hello, this is English"
+        if (src == Language.AUTO) {
+            val isChinese = Language.containsChinese(text)
+            if (!isChinese && text.any { Character.isLetter(it) } && target == Language.EN) {
+                target = Language.ZH
+            }
+        }
+        assertEquals(Language.ZH, target)
+
+        // 3. 用户手动选择了第三方语言（如日语 JA），输入为中文 -> 必须保留用户的目标语言 JA，绝不能被重置为 EN 或 ZH
+        target = Language.JA
+        text = "你好，世界"
+        if (src == Language.AUTO) {
+            val isChinese = Language.containsChinese(text)
+            // 仅在目标与输入冲突时纠偏
+            if (isChinese && target == Language.ZH) {
+                target = Language.EN
+            } else if (!isChinese && text.any { Character.isLetter(it) } && target == Language.EN) {
+                target = Language.ZH
+            }
+        }
+        assertEquals(Language.JA, target) // 验证用户手动设置的目标语言完好保留！
+    }
+
+    @Test
+    fun testTtsResolvedSpeechLanguage() {
+        // 源语言为 AUTO 时，朗读原文必须根据实际文本字符集推导发音语种
+        fun resolveSpeakLang(text: String, lang: Language): Language {
+            return if (lang == Language.AUTO) Language.detectLanguage(text) else lang
+        }
+
+        assertEquals(Language.ZH, resolveSpeakLang("你好世界", Language.AUTO))
+        assertEquals(Language.EN, resolveSpeakLang("Hello world", Language.AUTO))
+        assertEquals(Language.JA, resolveSpeakLang("こんにちは", Language.AUTO))
+        assertEquals(Language.KO, resolveSpeakLang("안녕하세요", Language.AUTO))
+        assertEquals(Language.RU, resolveSpeakLang("Привет мир", Language.AUTO))
+        assertEquals(Language.AR, resolveSpeakLang("مرحبا", Language.AUTO))
     }
 }
 

@@ -133,16 +133,80 @@ data class Language(
         }
 
         /**
+         * 判定文本中是否包含汉字 (覆盖 CJK 统一表意文字基本区、扩展区及增补汉字)
+         */
+        fun containsChinese(text: String): Boolean {
+            var i = 0
+            while (i < text.length) {
+                val codePoint = text.codePointAt(i)
+                if (codePoint in 0x4E00..0x9FFF ||
+                    codePoint in 0x3400..0x4DBF ||
+                    codePoint in 0x20000..0x2CEAF ||
+                    (try { Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN } catch (_: Exception) { false })
+                ) {
+                    return true
+                }
+                i += Character.charCount(codePoint)
+            }
+            return false
+        }
+
+        /**
+         * 根据文本特征推断其实际所属语种（支持中、英、日、韩、俄、阿、泰等），用于 AUTO 模式下的发音与语言解析
+         */
+        fun detectLanguage(text: String): Language {
+            val clean = text.trim()
+            if (clean.isEmpty()) return EN
+
+            // 1. 日文平假名与片假名优先判定（日文中常包含汉字，若包含假名则必然为日文）
+            if (clean.any { it.code in 0x3040..0x30FF || it.code in 0x31F0..0x31FF }) {
+                return JA
+            }
+
+            // 2. 韩文
+            if (clean.any { it.code in 0xAC00..0xD7AF || it.code in 0x1100..0x11FF || it.code in 0x3130..0x318F }) {
+                return KO
+            }
+
+            // 3. 中文汉字
+            if (containsChinese(clean)) {
+                return ZH
+            }
+
+            // 4. 泰文
+            if (clean.any { it.code in 0x0E00..0x0E7F }) {
+                return TH
+            }
+
+            // 5. 阿拉伯文
+            if (clean.any { it.code in 0x0600..0x06FF }) {
+                return AR
+            }
+
+            // 6. 俄文 (西里尔字母)
+            if (clean.any { it.code in 0x0400..0x04FF }) {
+                return RU
+            }
+
+            // 7. 拉丁字母/法文/德文/西班牙语等外语，默认归属英文体系朗读
+            val hasLatin = clean.any { Character.isLetter(it) }
+            if (hasLatin) {
+                return EN
+            }
+
+            return EN
+        }
+
+        /**
          * 根据输入文本特征，为自动检测 (AUTO) 模式推导合适的目标语言：
-         * 1. 包含汉字 ([\u4e00-\u9fa5]) -> 输入为中文，目标语言动态对齐为英文 (Language.EN)
+         * 1. 包含汉字 -> 输入为中文，目标语言动态对齐为英文 (Language.EN)
          * 2. 不含汉字且包含字母/外语字符 -> 输入为英文或其他语种，目标语言动态对齐为中文 (Language.ZH)
          * 3. 纯空白、数字或符号 -> 保持当前目标语言
          */
         fun autoDetectTargetLanguage(text: String, currentTarget: Language = ZH): Language {
             val clean = text.trim()
             if (clean.isEmpty()) return currentTarget
-            val hasChinese = clean.any { it.code in 0x4E00..0x9FA5 }
-            if (hasChinese) {
+            if (containsChinese(clean)) {
                 return EN
             }
             val hasLetterOrForeign = clean.any { Character.isLetter(it) }

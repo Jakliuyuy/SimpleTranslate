@@ -101,13 +101,28 @@ class TranslateViewModel : ViewModel() {
     fun setSourceLanguage(lang: Language) {
         _sourceLanguage.value = lang
         prefRepo.lastSourceLang = lang.code
+        val text = _inputText.value.trim()
+        if (text.isNotEmpty() && lang == Language.AUTO) {
+            val autoTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
+            if (_targetLanguage.value != autoTarget) {
+                _targetLanguage.value = autoTarget
+                prefRepo.lastTargetLang = autoTarget.code
+            }
+        }
         triggerImmediateTranslate()
     }
 
     fun setTargetLanguage(lang: Language) {
         _targetLanguage.value = lang
         prefRepo.lastTargetLang = lang.code
-        triggerImmediateTranslate()
+        // 用户手动选择目标语言时，直接执行即时翻译，绝不覆盖用户手动选择的目标语言
+        debounceJob?.cancel()
+        val text = _inputText.value.trim()
+        if (text.isNotEmpty()) {
+            viewModelScope.launch {
+                performTranslate(text)
+            }
+        }
     }
 
     fun swapLanguages() {
@@ -141,14 +156,6 @@ class TranslateViewModel : ViewModel() {
         val text = _inputText.value.trim()
         if (text.isEmpty()) return
 
-        if (_sourceLanguage.value == Language.AUTO) {
-            val autoTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
-            if (_targetLanguage.value != autoTarget) {
-                _targetLanguage.value = autoTarget
-                prefRepo.lastTargetLang = autoTarget.code
-            }
-        }
-
         viewModelScope.launch {
             performTranslate(text)
         }
@@ -159,11 +166,11 @@ class TranslateViewModel : ViewModel() {
 
         // 防冲突安全校验：若源语言为 AUTO，彻底避免中译中或英译英尴尬情况
         if (_sourceLanguage.value == Language.AUTO) {
-            val hasChinese = text.any { it.code in 0x4E00..0x9FA5 }
-            if (hasChinese && _targetLanguage.value == Language.ZH) {
+            val isChinese = Language.containsChinese(text)
+            if (isChinese && _targetLanguage.value == Language.ZH) {
                 _targetLanguage.value = Language.EN
                 prefRepo.lastTargetLang = Language.EN.code
-            } else if (!hasChinese && text.any { Character.isLetter(it) } && _targetLanguage.value == Language.EN) {
+            } else if (!isChinese && text.any { Character.isLetter(it) } && _targetLanguage.value == Language.EN) {
                 _targetLanguage.value = Language.ZH
                 prefRepo.lastTargetLang = Language.ZH.code
             }
@@ -194,7 +201,7 @@ class TranslateViewModel : ViewModel() {
 
     fun speak(text: String, language: Language, onError: ((String) -> Unit)? = null) {
         val resolvedLang = if (language == Language.AUTO) {
-            if (text.any { it.code in 0x4E00..0x9FA5 }) Language.ZH else Language.EN
+            Language.detectLanguage(text)
         } else {
             language
         }
