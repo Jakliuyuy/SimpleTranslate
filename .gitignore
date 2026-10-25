@@ -11,3 +11,6 @@ local.properties
 .kotlin
 **/build/
 release-apk/
+server/proxy.log
+server/proxy.pid
+server/__pycache__/

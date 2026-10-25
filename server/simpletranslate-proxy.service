@@ -1,0 +1,16 @@
+[Unit]
+Description=SimpleTranslate Google Translation Proxy Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Translate/server
+ExecStart=/usr/bin/python3 /root/Translate/server/server.py --port 8787
+Restart=always
+RestartSec=3
+StandardOutput=append:/root/Translate/server/proxy.log
+StandardError=append:/root/Translate/server/proxy.log
+
+[Install]
+WantedBy=multi-user.target

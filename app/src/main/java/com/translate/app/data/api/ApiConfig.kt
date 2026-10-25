@@ -11,6 +11,14 @@ package com.translate.app.data.api
 object ApiConfig {
 
     // ==========================================
+    // 0. Google 翻译内置引擎 (免Key / 服务器中转代理与海外直连双模)
+    // 默认服务器位于美国 (129.151.9.55:8787)，解决国内网络无法直连 Google 的痛点
+    // ==========================================
+    const val DEFAULT_GOOGLE_PROXY_URL: String = "http://129.151.9.55:8787"
+    const val DEFAULT_GOOGLE_MODE: String = "proxy" // "proxy" (中转代理模式) 或 "direct" (官方直连模式)
+
+
+    // ==========================================
     // 1. 百度翻译开放平台 (通用文本翻译 / 大模型文本翻译 API)
     // 申请地址: https://fanyi-api.baidu.com/
     // 免费额度: 标准版个人认证每月 5 万字符免费，高级版每月 100-200 万字符免费

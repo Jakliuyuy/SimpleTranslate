@@ -1,6 +1,7 @@
 package com.translate.app.data.api
 
 import com.translate.app.data.api.engine.BaiduTranslationEngine
+import com.translate.app.data.api.engine.GoogleTranslationEngine
 import com.translate.app.data.api.engine.MockTranslationEngine
 import com.translate.app.data.api.engine.TencentTranslationEngine
 import com.translate.app.data.api.engine.YoudaoTranslationEngine
@@ -10,6 +11,11 @@ import com.translate.app.data.repository.PreferenceRepository
 class EngineFactory(private val preferenceRepository: PreferenceRepository) {
 
     private val mockEngine = MockTranslationEngine()
+
+    private val googleEngine = GoogleTranslationEngine(
+        getMode = { preferenceRepository.googleMode },
+        getProxyUrl = { preferenceRepository.googleProxyUrl }
+    )
 
     private val baiduEngine = BaiduTranslationEngine(
         getAppId = { preferenceRepository.baiduAppId },
@@ -28,10 +34,11 @@ class EngineFactory(private val preferenceRepository: PreferenceRepository) {
 
     fun getEngine(type: TranslationEngineType): ITranslationEngine {
         return when (type) {
-            TranslationEngineType.MOCK -> mockEngine
+            TranslationEngineType.GOOGLE -> googleEngine
             TranslationEngineType.BAIDU -> baiduEngine
             TranslationEngineType.YOUDAO -> youdaoEngine
             TranslationEngineType.TENCENT -> tencentEngine
+            TranslationEngineType.MOCK -> mockEngine
         }
     }
 

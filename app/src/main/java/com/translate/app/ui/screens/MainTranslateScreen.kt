@@ -58,6 +58,7 @@ import com.translate.app.ui.viewmodel.TranslateViewModel
 fun MainTranslateScreen(
     viewModel: TranslateViewModel,
     onVoiceInputClick: () -> Unit,
+    onImageTranslateClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -149,6 +150,7 @@ fun MainTranslateScreen(
                         Toast.makeText(context, err, Toast.LENGTH_SHORT).show()
                     }
                 },
+                onImageTranslateClick = onImageTranslateClick,
                 isSpeaking = isSpeaking
             )
         }

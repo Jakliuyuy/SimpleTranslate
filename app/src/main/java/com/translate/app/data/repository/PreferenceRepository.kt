@@ -12,6 +12,8 @@ class PreferenceRepository(context: Context) {
 
     companion object {
         private const val KEY_ENGINE_TYPE = "pref_engine_type"
+        private const val KEY_GOOGLE_MODE = "pref_google_mode"
+        private const val KEY_GOOGLE_PROXY_URL = "pref_google_proxy_url"
         private const val KEY_BAIDU_APP_ID = "pref_baidu_app_id"
         private const val KEY_BAIDU_SECRET_KEY = "pref_baidu_secret_key"
         private const val KEY_YOUDAO_APP_KEY = "pref_youdao_app_key"
@@ -24,12 +26,25 @@ class PreferenceRepository(context: Context) {
 
     var selectedEngineType: TranslationEngineType
         get() {
-            val id = prefs.getString(KEY_ENGINE_TYPE, TranslationEngineType.BAIDU.id) ?: TranslationEngineType.BAIDU.id
+            val id = prefs.getString(KEY_ENGINE_TYPE, TranslationEngineType.GOOGLE.id) ?: TranslationEngineType.GOOGLE.id
             return TranslationEngineType.fromId(id)
         }
         set(value) {
             prefs.edit().putString(KEY_ENGINE_TYPE, value.id).apply()
         }
+
+    // Google 翻译配置 (模式: "proxy" 或 "direct", 中转代理地址)
+    var googleMode: String
+        get() = prefs.getString(KEY_GOOGLE_MODE, ApiConfig.DEFAULT_GOOGLE_MODE) ?: ApiConfig.DEFAULT_GOOGLE_MODE
+        set(value) = prefs.edit().putString(KEY_GOOGLE_MODE, value.trim()).apply()
+
+    var googleProxyUrl: String
+        get() {
+            val saved = prefs.getString(KEY_GOOGLE_PROXY_URL, null)
+            return if (!saved.isNullOrBlank()) saved else ApiConfig.DEFAULT_GOOGLE_PROXY_URL
+        }
+        set(value) = prefs.edit().putString(KEY_GOOGLE_PROXY_URL, value.trim()).apply()
+
 
     // 百度配置（优先读取 SharedPreferences，为空则回退到 ApiConfig）
     var baiduAppId: String

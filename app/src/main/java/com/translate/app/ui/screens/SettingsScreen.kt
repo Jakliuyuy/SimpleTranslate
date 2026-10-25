@@ -79,6 +79,10 @@ fun SettingsScreen(
     val testResult by viewModel.testResult.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
 
+    // Google 翻译字段
+    var googleMode by remember { mutableStateOf(prefRepo.googleMode) }
+    var googleProxyUrl by remember { mutableStateOf(prefRepo.googleProxyUrl) }
+
     // 百度字段
     var baiduAppId by remember { mutableStateOf(prefRepo.baiduAppId) }
     var baiduSecretKey by remember { mutableStateOf(prefRepo.baiduSecretKey) }
@@ -186,6 +190,156 @@ fun SettingsScreen(
         }
 
         // 密钥配置详情卡片 (根据选中动态展开)
+        AnimatedVisibility(visible = selectedEngine == TranslationEngineType.GOOGLE) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Google 翻译网络连接模式",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "免Key服务",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                }
+
+                Text(
+                    text = "Google 翻译无需申请任何 API Key 即可使用！针对国内用户，本应用已为您搭建专用的海外服务器中转代理通道；海外用户亦可选择直连官方接口。",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 模式选择单选区
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (googleMode == "proxy") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            else Color.Transparent
+                        )
+                        .clickable { googleMode = "proxy" }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = googleMode == "proxy",
+                        onClick = { googleMode = "proxy" },
+                        colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "服务器中转代理 (推荐国内网络)",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "经由美国专用高速服务器代理向 Google 请求，国内无需翻墙开箱即用",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (googleMode == "direct") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            else Color.Transparent
+                        )
+                        .clickable { googleMode = "direct" }
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = googleMode == "direct",
+                        onClick = { googleMode = "direct" },
+                        colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = "官方接口直连 (需国际网络/海外)",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "手机直接向 translate.googleapis.com 发送请求，适合海外用户或开启代理时",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // 若为代理模式，显示代理服务器地址输入框
+                if (googleMode == "proxy") {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = googleProxyUrl,
+                        onValueChange = { googleProxyUrl = it.trim() },
+                        label = { Text("中转服务器地址") },
+                        placeholder = { Text("http://129.151.9.55:8787") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {
+                                    val clip = clipboardManager.primaryClip?.getItemAt(0)?.text?.toString()?.trim()
+                                    if (!clip.isNullOrBlank()) {
+                                        googleProxyUrl = clip
+                                        Toast.makeText(context, "已粘贴代理地址", Toast.LENGTH_SHORT).show()
+                                    }
+                                }) {
+                                    Icon(Icons.Default.ContentPaste, contentDescription = "粘贴代理地址")
+                                }
+                            }
+                        }
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = "恢复默认地址 (129.151.9.55:8787)",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            ),
+                            modifier = Modifier.clickable {
+                                googleProxyUrl = com.translate.app.data.api.ApiConfig.DEFAULT_GOOGLE_PROXY_URL
+                                Toast.makeText(context, "已重置为默认美国服务器代理", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
         AnimatedVisibility(visible = selectedEngine == TranslationEngineType.BAIDU) {
             Column(
                 modifier = Modifier
@@ -412,6 +566,7 @@ fun SettingsScreen(
         Button(
             onClick = {
                 // 保存各引擎配置
+                viewModel.saveGoogleConfig(googleMode, googleProxyUrl)
                 viewModel.saveBaiduConfig(baiduAppId, baiduSecretKey)
                 viewModel.saveYoudaoConfig(youdaoAppKey, youdaoAppSecret)
                 viewModel.saveTencentConfig(tencentSecretId, tencentSecretKey)

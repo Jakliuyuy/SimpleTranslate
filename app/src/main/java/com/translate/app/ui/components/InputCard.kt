@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Mic
@@ -41,6 +42,7 @@ fun InputCard(
     onPasteClick: () -> Unit,
     onVoiceClick: () -> Unit,
     onTtsClick: () -> Unit,
+    onImageTranslateClick: () -> Unit = {},
     isSpeaking: Boolean = false,
     modifier: Modifier = Modifier
 ) {
@@ -156,6 +158,19 @@ fun InputCard(
                         Icon(
                             imageVector = Icons.Default.Mic,
                             contentDescription = "语音输入",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // 图片/拍照翻译
+                    IconButton(
+                        onClick = onImageTranslateClick,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = "图片/拍照翻译",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )

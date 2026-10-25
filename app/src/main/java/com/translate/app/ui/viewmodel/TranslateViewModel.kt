@@ -259,6 +259,11 @@ class TranslateViewModel : ViewModel() {
         triggerImmediateTranslate()
     }
 
+    fun saveGoogleConfig(mode: String, proxyUrl: String) {
+        prefRepo.googleMode = mode
+        prefRepo.googleProxyUrl = proxyUrl
+    }
+
     fun saveBaiduConfig(appId: String, secretKey: String) {
         prefRepo.baiduAppId = appId
         prefRepo.baiduSecretKey = secretKey

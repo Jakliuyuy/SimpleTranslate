@@ -162,4 +162,58 @@ class TranslationEngineTest {
         assertEquals(Language.EN, newSrc)
         assertEquals(Language.ZH, newTgt)
     }
+
+    @Test
+    fun testGoogleLanguageCodeMapping() {
+        assertEquals("zh-CN", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.ZH))
+        assertEquals("en", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.EN))
+        assertEquals("ja", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.JA))
+        assertEquals("ko", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.KO))
+        assertEquals("fr", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.FR))
+        assertEquals("auto", com.translate.app.data.api.engine.GoogleTranslationEngine.toGoogleLanguageCode(Language.AUTO))
+    }
+
+    @Test
+    fun testGoogleEngineBlankInput() = runBlocking {
+        val engine = com.translate.app.data.api.engine.GoogleTranslationEngine()
+        val result = engine.translate("   ", Language.EN, Language.ZH)
+        assertTrue(result.isSuccess)
+        assertEquals("", result.translatedText)
+    }
+
+    @Test
+    fun testGoogleEngineDirectTranslation() = runBlocking {
+        val engine = com.translate.app.data.api.engine.GoogleTranslationEngine(
+            getMode = { "direct" }
+        )
+        val result = engine.translate("Good morning", Language.EN, Language.ZH)
+        assertTrue(result.isSuccess)
+        assertTrue(result.translatedText.contains("早") || result.translatedText.contains("好"))
+    }
+
+    @Test
+    fun testGoogleEngineProxyTranslation() = runBlocking {
+        val engine = com.translate.app.data.api.engine.GoogleTranslationEngine(
+            getMode = { "proxy" },
+            getProxyUrl = { "http://127.0.0.1:8787" }
+        )
+        val result = engine.translate("Thank you", Language.EN, Language.ZH)
+        assertTrue(result.isSuccess)
+        assertTrue(result.translatedText.contains("谢谢") || result.translatedText.contains("感谢"))
+    }
+
+    @Test
+    fun testOcrTextCleaning() {
+        val messyText = "  Hello World  \n\n   \n   This is line 2  \n"
+        val cleaned = com.translate.app.util.OcrManager.cleanRecognizedText(messyText)
+        assertEquals("Hello World\nThis is line 2", cleaned)
+    }
+
+    @Test
+    fun testGoogleEngineTypeRegistered() {
+        val googleType = com.translate.app.data.model.TranslationEngineType.fromId("google")
+        assertEquals(com.translate.app.data.model.TranslationEngineType.GOOGLE, googleType)
+        assertEquals("Google 翻译 (内置/免Key)", googleType.title)
+    }
 }
+
