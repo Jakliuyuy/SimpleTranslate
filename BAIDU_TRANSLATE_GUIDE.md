@@ -89,15 +89,33 @@ Key: wMHD_dber75qj3nn4okmvvqb0
 ```
 
 ### 1. 智能数据清洗
-针对用户复制密钥时可能携带的前缀（如 `keywMHD_...`）或多余空格，底层引擎在发起请求前会自动进行清洗与去空格处理：
+针对用户复制密钥时可能携带的前缀（如 `keywMHD_...`）、外层引号、`Bearer ` 前缀或多余空格，底层引擎在发起请求前会自动进行清洗与去空格处理：
 ```kotlin
-private fun sanitizeKey(key: String): String {
-    val trimmed = key.trim()
-    return if (trimmed.startsWith("keywMHD", ignoreCase = true)) {
-        trimmed.substring(3)
-    } else {
-        trimmed
+fun sanitizeKey(key: String): String {
+    var result = key.trim()
+    // 剥离外层单双引号
+    if ((result.startsWith("\"") && result.endsWith("\"")) ||
+        (result.startsWith("'") && result.endsWith("'")) ||
+        (result.startsWith("“") && result.endsWith("”"))
+    ) {
+        result = result.substring(1, result.length - 1).trim()
     }
+    // 剥离 Bearer 前缀
+    if (result.startsWith("Bearer ", ignoreCase = true)) {
+        result = result.substring(7).trim()
+    }
+    // 剥离 key: 或 key= 前缀
+    if (result.startsWith("key:", ignoreCase = true) || result.startsWith("key=", ignoreCase = true)) {
+        result = result.substring(4).trim()
+    }
+    // 剥离粘连的 key 前缀 (如 keywMHD...)
+    if (result.startsWith("key", ignoreCase = true) && result.length > 3 && !result.startsWith("key-", ignoreCase = true)) {
+        val remainder = result.substring(3).trim()
+        if (remainder.isNotEmpty()) {
+            result = remainder
+        }
+    }
+    return result
 }
 ```
 
