@@ -16,6 +16,10 @@ class TestGoogleProxy(unittest.TestCase):
         self.assertEqual(normalize_lang("zh-tw"), "zh-TW")
         self.assertEqual(normalize_lang("en"), "en")
         self.assertEqual(normalize_lang("auto"), "auto")
+        self.assertEqual(normalize_lang("jp"), "ja")
+        self.assertEqual(normalize_lang("kor"), "ko")
+        self.assertEqual(normalize_lang("fra"), "fr")
+        self.assertEqual(normalize_lang("spa"), "es")
 
     def test_translate_english_to_chinese(self):
         result = request_google_translate(text="Good morning", sl="en", tl="zh-CN")
@@ -35,6 +39,19 @@ class TestGoogleProxy(unittest.TestCase):
         self.assertTrue(len(result["translatedText"]) > 0)
         self.assertIn("你好", result["translatedText"])
         self.assertIn("感谢", result["translatedText"])
+
+    def test_empty_query_http_error(self):
+        import urllib.request
+        import urllib.error
+        import json
+        try:
+            urllib.request.urlopen("http://127.0.0.1:8787/api/translate")
+            self.fail("Expected HTTP 400")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 400)
+            data = json.loads(e.read().decode("utf-8"))
+            self.assertFalse(data["success"])
+            self.assertEqual(data["code"], 400)
 
 if __name__ == "__main__":
     unittest.main()

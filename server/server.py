@@ -41,6 +41,12 @@ LANG_CODE_MAP = {
     "zh-tw": "zh-TW",
     "zh-hant": "zh-TW",
     "cht": "zh-TW",
+    "jp": "ja",
+    "kor": "ko",
+    "fra": "fr",
+    "spa": "es",
+    "ara": "ar",
+    "vie": "vi",
 }
 
 def normalize_lang(code: str) -> str:
@@ -146,7 +152,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if not text.strip():
                 self.send_json(400, {
                     "code": 400,
-                    "success": false,
+                    "success": False,
                     "error": "缺少必填参数 text 或 q"
                 })
                 return
@@ -225,8 +231,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # 简化日志输出
         sys.stderr.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {self.address_string()} - {format % args}\n")
 
+class ReusableThreadingHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
 def run(host: str = "0.0.0.0", port: int = 8787):
-    server = ThreadingHTTPServer((host, port), ProxyHandler)
+    server = ReusableThreadingHTTPServer((host, port), ProxyHandler)
     print(f"=====================================================")
     print(f"🚀 SimpleTranslate Google Proxy Started")
     print(f"📡 Listening on http://{host}:{port}")

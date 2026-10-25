@@ -17,13 +17,11 @@ if [ -f "$PID_FILE" ]; then
         echo "⚠️ 进程 $PID 未运行"
     fi
     rm -f "$PID_FILE"
-else
-    echo "⚠️ PID 文件不存在，尝试通过端口查找并停止..."
-    PIDS=$(lsof -ti :8787 2>/dev/null)
-    if [ -n "$PIDS" ]; then
-        kill -9 $PIDS
-        echo "✅ 已杀死占用 8787 端口的进程: $PIDS"
-    else
-        echo "未发现运行中的服务。"
-    fi
 fi
+
+PIDS=$(lsof -ti :8787 2>/dev/null)
+if [ -n "$PIDS" ]; then
+    echo "⚠️ 释放占用 8787 端口的残留进程: $PIDS"
+    kill -9 $PIDS 2>/dev/null || true
+fi
+echo "✅ 8787 端口已就绪"
