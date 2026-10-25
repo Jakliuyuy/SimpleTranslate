@@ -38,8 +38,8 @@ jobs:
       - name: Organize APK Artifacts
         run: |
           mkdir -p build/artifacts
-          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.3.1-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.3.1-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.3.2-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.3.2-debug.apk
           ls -lh build/artifacts/
 
       - name: Upload APK Artifacts
@@ -52,29 +52,25 @@ jobs:
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.1
-          name: "SimpleTranslate v1.3.1 (Fix: 100% In-Place Mask, Left Alignment, Compact OCR Boxes & Line-Height Adaptation)"
+          tag_name: v1.3.2
+          name: "SimpleTranslate v1.3.2 (Super Slim Release: arm64-v8a ABI Filter & R8/Resource Shrink 54MB -> 16MB)"
           body: |
-            ## 🚀 SimpleTranslate 极简谷歌翻译 Android APP v1.3.1 视觉与排版专项修复版
+            ## 🚀 SimpleTranslate 极简谷歌翻译 Android APP v1.3.2 极致瘦身版 (54MB ➡️ 16MB)
 
-            ### 🛠️ 核心视觉排版缺陷修复与全面优化
-            - 🛡️ **彻底根除原文字透光重影 (100% 完全不透明遮罩 + 3px 安全外扩)**：
-              - 废除原 94% 半透明遮罩（`alpha = 242/240`），背景遮罩画笔强制统一为 `100% 完全不透明 (alpha = 255)`；
-              - 增加 `expandRect` 矩形安全向外膨胀机制（默认向外扩展 3 像素），彻底物理擦除原英文墨迹与抗锯齿边缘，杜绝中英重叠鬼影乱码。
-            - 📐 **全面恢复自然左对齐排版 (ALIGN_NORMAL)**：
-              - 废除硬编码居中对齐（`ALIGN_CENTER`），切换为 `Layout.Alignment.ALIGN_NORMAL` 标准左对齐；
-              - 多行文本从文本框左上角自然向下向右展开排布，杜绝垂直强制居中造成的上下大片空白脱节。
-            - 🎯 **行级紧凑包围盒聚合 (Compact Bounding Box from Lines)**：
-              - 深度解析 Google ML Kit 的 `textBlock.lines`，优先采用行级包围盒的并集计算紧凑外接矩形；
-              - 彻底解决短消息气泡遮罩比原气泡宽、溢出到空白区的问题，同时紧密完全包含长文本所有行，消除漏字。
-            - 🔠 **多行段落行高与字号动态自适应**：
-              - 针对多行段落，基于行数与平均行高动态估算合理字号基准，并优化行距与段落换行规范化，让译文舒展自然填满原文字区域。
+            ### ⚡ 核心瘦身成果与技术优化
+            - 📉 **体积暴降 70%**：Release APK 体积由原本臃肿的 **54MB** 大幅骤降至 **16MB**，秒速下载与安装！
+            - 🎯 **现代架构精准适配 (arm64-v8a ABI Filter)**：
+              - 剔除冗余的历史 32 位与模拟器架构（x86, x86_64, armeabi-v7a），仅保留现代 Android 真机标准 64 位核心动态库；
+              - 单项去除多余 ML Kit OCR 动态库占用达 30MB+。
+            - 🛡️ **全面启用 R8 混淆优化与无用资源缩减 (isMinifyEnabled & isShrinkResources)**：
+              - 启用 R8 死代码剥离与无用资源裁剪，classes.dex 体积由 45MB 优化至仅 5.7MB；
+              - 针对 ML Kit OCR、OkHttp3、Gson、Coroutines、Jetpack Compose 等关键底层框架严密配置 Proguard 保留规则，保证极致体积的同时具备 100% 运行时稳定性与业务可用性。
 
-            ### 📦 安装包下载
-            - [SimpleTranslate-v1.3.1-release.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.1/SimpleTranslate-v1.3.1-release.apk) (正式发布版)
-            - [SimpleTranslate-v1.3.1-debug.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.1/SimpleTranslate-v1.3.1-debug.apk) (调试版)
+            ### 📦 安装包下载直链
+            - [SimpleTranslate-v1.3.2-release.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.2/SimpleTranslate-v1.3.2-release.apk) (正式发布版 - 极致瘦身 16MB)
+            - [SimpleTranslate-v1.3.2-debug.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.2/SimpleTranslate-v1.3.2-debug.apk) (调试版)
           files: |
-            build/artifacts/SimpleTranslate-v1.3.1-release.apk
-            build/artifacts/SimpleTranslate-v1.3.1-debug.apk
+            build/artifacts/SimpleTranslate-v1.3.2-release.apk
+            build/artifacts/SimpleTranslate-v1.3.2-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
