@@ -23,6 +23,24 @@ data class OverlayRect(
 
     fun toAndroidRect(): Rect = Rect(left, top, right, bottom)
 
+    fun expand(
+        outsetX: Int = 3,
+        outsetY: Int = 3,
+        maxWidth: Int = Int.MAX_VALUE,
+        maxHeight: Int = Int.MAX_VALUE
+    ): OverlayRect {
+        val newLeft = (left - outsetX).coerceAtLeast(0)
+        val newTop = (top - outsetY).coerceAtLeast(0)
+        val newRight = (right + outsetX).coerceAtMost(maxWidth)
+        val newBottom = (bottom + outsetY).coerceAtMost(maxHeight)
+        return OverlayRect(
+            left = newLeft,
+            top = newTop,
+            right = kotlin.math.max(newLeft, newRight),
+            bottom = kotlin.math.max(newTop, newBottom)
+        )
+    }
+
     companion object {
         fun fromAndroidRect(rect: Rect): OverlayRect {
             return OverlayRect(rect.left, rect.top, rect.right, rect.bottom)
@@ -39,6 +57,7 @@ data class TranslatedBlock(
     val originalText: String,
     var translatedText: String = "",
     val box: OverlayRect,
+    val lineBoxes: List<OverlayRect> = emptyList(), // ML Kit 各行的精准包围盒
     var backgroundColor: Int = -1, // 0xFFFFFFFF
     var textColor: Int = -16777216, // 0xFF000000
     var isTranslating: Boolean = false,
@@ -54,6 +73,7 @@ data class TranslatedBlock(
         originalText: String,
         translatedText: String = "",
         boundingBox: Rect,
+        lineBoxes: List<OverlayRect> = emptyList(),
         backgroundColor: Int = -1,
         textColor: Int = -16777216,
         isTranslating: Boolean = false,
@@ -64,6 +84,7 @@ data class TranslatedBlock(
         originalText = originalText,
         translatedText = translatedText,
         box = OverlayRect.fromAndroidRect(boundingBox),
+        lineBoxes = lineBoxes,
         backgroundColor = backgroundColor,
         textColor = textColor,
         isTranslating = isTranslating,

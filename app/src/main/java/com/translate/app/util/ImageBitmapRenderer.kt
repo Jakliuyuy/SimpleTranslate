@@ -38,32 +38,48 @@ object ImageBitmapRenderer {
         }
 
         blocks.forEach { block ->
-            val displayText = if (block.translatedText.isNotBlank()) block.translatedText else block.originalText
-            if (displayText.isBlank()) return@forEach
+            val rawDisplayText = if (block.translatedText.isNotBlank()) block.translatedText else block.originalText
+            if (rawDisplayText.isBlank()) return@forEach
+            val displayText = ImageOverlayHelper.normalizeParagraphText(rawDisplayText)
 
             val rect = block.boundingBox
-            val width = max(10, rect.width())
-            val height = max(10, rect.height())
+            // 1. 矩形向外安全膨胀 2~4px，彻底物理擦除原图的英文字体墨迹和边缘抗锯齿
+            val expRect = ImageOverlayHelper.expandRect(
+                rect = rect,
+                outsetX = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                outsetY = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                maxWidth = originalBitmap.width,
+                maxHeight = originalBitmap.height
+            )
+            val expWidth = max(10, expRect.width())
+            val expHeight = max(10, expRect.height())
 
-            // 1. 绘制背景圆角遮罩
+            // 绘制 100% 完全不透明背景圆角遮罩 (alpha = 255，彻底杜绝文字透过重叠乱码)
             bgPaint.color = block.backgroundColor
-            bgPaint.alpha = 240 // 约 94% 不透明度，完美覆盖原英文同时融入背景
-            val cornerRadius = min(width, height) * 0.08f
+            bgPaint.alpha = ImageOverlayHelper.MASK_ALPHA
+            val cornerRadius = min(expWidth, expHeight) * 0.06f
             canvas.drawRoundRect(
-                RectF(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat()),
+                RectF(expRect.left.toFloat(), expRect.top.toFloat(), expRect.right.toFloat(), expRect.bottom.toFloat()),
                 cornerRadius,
                 cornerRadius,
                 bgPaint
             )
 
-            // 2. 自适应计算文本排版（摆脱 48f 硬编码限制，支持大图与大招牌高保真渲染）
-            val paddingH = max(2f, width * 0.04f)
-            val paddingV = max(2f, height * 0.04f)
-            val availWidth = max(8, (width - paddingH * 2).toInt())
-            val availHeight = max(8f, height - paddingV * 2)
+            // 2. 自适应计算文本排版（基于原行数与行高动态自适应，左对齐自然向下排布）
+            val paddingH = max(2f, expWidth * 0.03f)
+            val paddingV = max(2f, expHeight * 0.03f)
+            val availWidth = max(8, (expWidth - paddingH * 2).toInt())
+            val availHeight = max(8f, expHeight - paddingV * 2)
 
-            var bestLayout: StaticLayout? = null
-            var textSize = min(height * 0.75f, width * 0.85f).coerceAtLeast(10f)
+            val origLineCount = max(1, block.lineBoxes.size)
+            val avgLineHeight = expHeight.toFloat() / origLineCount
+            val lineBasedSize = if (origLineCount > 1) {
+                (avgLineHeight * 0.72f).coerceIn(12f, expHeight * 0.85f)
+            } else {
+                min(expHeight * 0.75f, expWidth * 0.85f).coerceAtLeast(10f)
+            }
+
+            var textSize = max(lineBasedSize, min(expHeight * 0.75f, expWidth * 0.85f)).coerceIn(10f, 120f)
             val minTextSize = 10f
 
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -71,11 +87,13 @@ object ImageBitmapRenderer {
                 isFakeBoldText = true
             }
 
+            var bestLayout: StaticLayout? = null
             while (textSize >= minTextSize) {
                 textPaint.textSize = textSize
                 val layout = StaticLayout.Builder.obtain(displayText, 0, displayText.length, textPaint, availWidth)
-                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL) // 自然左对齐
                     .setIncludePad(false)
+                    .setLineSpacing(0f, 1.08f)
                     .build()
 
                 if (layout.height <= availHeight) {
@@ -89,16 +107,20 @@ object ImageBitmapRenderer {
             if (bestLayout == null) {
                 textPaint.textSize = minTextSize
                 bestLayout = StaticLayout.Builder.obtain(displayText, 0, displayText.length, textPaint, availWidth)
-                    .setAlignment(Layout.Alignment.ALIGN_CENTER)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                     .setIncludePad(false)
+                    .setLineSpacing(0f, 1.08f)
                     .build()
             }
 
-            // 3. 严格边界裁剪与居中绘制（彻底杜绝文字溢出框外涂抹原图）
-            val offsetY = rect.top + paddingV + max(0f, (availHeight - bestLayout.height) / 2f)
+            // 3. 严格边界裁剪与自然左对齐排布
+            val isSingleLine = bestLayout.lineCount == 1
+            val relY = ImageOverlayHelper.computeVerticalOffset(availHeight, bestLayout.height.toFloat(), paddingV, isSingleLine)
+            val offsetY = expRect.top + relY
+
             canvas.save()
-            canvas.clipRect(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat())
-            canvas.translate(rect.left + paddingH, offsetY)
+            canvas.clipRect(expRect.left.toFloat(), expRect.top.toFloat(), expRect.right.toFloat(), expRect.bottom.toFloat())
+            canvas.translate(expRect.left + paddingH, offsetY)
             bestLayout.draw(canvas)
             canvas.restore()
         }

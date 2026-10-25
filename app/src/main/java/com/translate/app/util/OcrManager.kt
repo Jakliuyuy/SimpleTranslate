@@ -53,42 +53,49 @@ object OcrManager {
                         val rawText = textBlock.text.trim()
                         if (rawText.isBlank()) continue
 
-                        // 获取包围盒，若为 null 则聚合 lines 计算包围盒
-                        var box = textBlock.boundingBox
-                        if (box == null) {
-                            var minLeft = Int.MAX_VALUE
-                            var minTop = Int.MAX_VALUE
-                            var maxRight = Int.MIN_VALUE
-                            var maxBottom = Int.MIN_VALUE
-                            for (line in textBlock.lines) {
-                                line.boundingBox?.let { lBox ->
-                                    minLeft = minOf(minLeft, lBox.left)
-                                    minTop = minOf(minTop, lBox.top)
-                                    maxRight = maxOf(maxRight, lBox.right)
-                                    maxBottom = maxOf(maxBottom, lBox.bottom)
-                                }
-                            }
-                            if (minLeft < maxRight && minTop < maxBottom) {
-                                box = Rect(minLeft, minTop, maxRight, maxBottom)
-                            }
-                        }
+                        // 1. 提取所有 lines 的精准包围盒
+                        val lineOverlayBoxes = mutableListOf<com.translate.app.data.model.OverlayRect>()
+                        var minLeft = Int.MAX_VALUE
+                        var minTop = Int.MAX_VALUE
+                        var maxRight = Int.MIN_VALUE
+                        var maxBottom = Int.MIN_VALUE
 
-                        // 限制在 Bitmap 尺寸范围内
-                        val safeBox = if (box != null) {
-                            Rect(
-                                box.left.coerceIn(0, bitmap.width),
-                                box.top.coerceIn(0, bitmap.height),
-                                box.right.coerceIn(0, bitmap.width),
-                                box.bottom.coerceIn(0, bitmap.height)
+                        for (line in textBlock.lines) {
+                            val lBox = line.boundingBox ?: continue
+                            val safeLBox = Rect(
+                                lBox.left.coerceIn(0, bitmap.width),
+                                lBox.top.coerceIn(0, bitmap.height),
+                                lBox.right.coerceIn(0, bitmap.width),
+                                lBox.bottom.coerceIn(0, bitmap.height)
                             )
-                        } else {
-                            Rect(0, 0, 10, 10)
+                            if (safeLBox.width() > 0 && safeLBox.height() > 0) {
+                                minLeft = minOf(minLeft, safeLBox.left)
+                                minTop = minOf(minTop, safeLBox.top)
+                                maxRight = maxOf(maxRight, safeLBox.right)
+                                maxBottom = maxOf(maxBottom, safeLBox.bottom)
+                                lineOverlayBoxes.add(com.translate.app.data.model.OverlayRect.fromAndroidRect(safeLBox))
+                            }
                         }
 
-                        if (safeBox.width() <= 0 || safeBox.height() <= 0) continue
+                        // 2. 优先采用真实行包围盒聚合得到的紧凑包围盒 (Compact Box)
+                        // 彻底解决短消息气泡遮罩比原气泡宽、溢出到空白区的问题，同时紧密完全包含长文本所有行
+                        val compactBox = if (minLeft < maxRight && minTop < maxBottom) {
+                            Rect(minLeft, minTop, maxRight, maxBottom)
+                        } else {
+                            textBlock.boundingBox?.let { b ->
+                                Rect(
+                                    b.left.coerceIn(0, bitmap.width),
+                                    b.top.coerceIn(0, bitmap.height),
+                                    b.right.coerceIn(0, bitmap.width),
+                                    b.bottom.coerceIn(0, bitmap.height)
+                                )
+                            } ?: Rect(0, 0, 10, 10)
+                        }
+
+                        if (compactBox.width() <= 0 || compactBox.height() <= 0) continue
 
                         // 智能采样背景色并计算对比前景色
-                        val bgColor = ImageOverlayHelper.sampleBackgroundColor(bitmap, safeBox)
+                        val bgColor = ImageOverlayHelper.sampleBackgroundColor(bitmap, compactBox)
                         val textColor = ImageOverlayHelper.computeContrastingTextColor(bgColor)
 
                         resultBlocks.add(
@@ -96,7 +103,8 @@ object OcrManager {
                                 index = ++blockIndex,
                                 originalText = rawText,
                                 translatedText = "",
-                                boundingBox = safeBox,
+                                boundingBox = compactBox,
+                                lineBoxes = lineOverlayBoxes,
                                 backgroundColor = bgColor,
                                 textColor = textColor,
                                 isTranslating = false

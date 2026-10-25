@@ -274,40 +274,62 @@ fun ImageTranslateScreen(
                             val height = max(10, rect.height())
 
                             if (uiState.showTranslationOverlay) {
-                                val displayText = if (block.translatedText.isNotBlank()) block.translatedText else block.originalText
-                                if (displayText.isNotBlank()) {
-                                    // 绘制背景遮罩覆盖层 (取采样边缘色，约 94% 不透明度)
+                                val rawDisplayText = if (block.translatedText.isNotBlank()) block.translatedText else block.originalText
+                                if (rawDisplayText.isNotBlank()) {
+                                    val displayText = ImageOverlayHelper.normalizeParagraphText(rawDisplayText)
+                                    // 1. 矩形向外安全膨胀 2~4px，彻底物理擦除原图的英文字体墨迹和边缘抗锯齿
+                                    val expRect = ImageOverlayHelper.expandRect(
+                                        rect = rect,
+                                        outsetX = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                                        outsetY = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                                        maxWidth = bitmap.width,
+                                        maxHeight = bitmap.height
+                                    )
+                                    val expWidth = max(10, expRect.width())
+                                    val expHeight = max(10, expRect.height())
+
+                                    // 绘制 100% 完全不透明背景遮罩覆盖层 (alpha = 255，彻底杜绝文字透过重叠乱码)
                                     bgPaint.color = block.backgroundColor
-                                    bgPaint.alpha = 242
-                                    val cornerRadius = min(width, height) * 0.08f
+                                    bgPaint.alpha = ImageOverlayHelper.MASK_ALPHA
+                                    val cornerRadius = min(expWidth, expHeight) * 0.06f
                                     nativeCanvas.drawRoundRect(
-                                        rect.left.toFloat(),
-                                        rect.top.toFloat(),
-                                        rect.right.toFloat(),
-                                        rect.bottom.toFloat(),
+                                        expRect.left.toFloat(),
+                                        expRect.top.toFloat(),
+                                        expRect.right.toFloat(),
+                                        expRect.bottom.toFloat(),
                                         cornerRadius,
                                         cornerRadius,
                                         bgPaint
                                     )
 
                                     // 计算自适应排版文本（利用排版缓存，杜绝手势重绘频繁 GC 掉帧）
-                                    val paddingH = max(2f, width * 0.04f)
-                                    val paddingV = max(2f, height * 0.04f)
-                                    val availWidth = max(8, (width - paddingH * 2).toInt())
-                                    val availHeight = max(8f, height - paddingV * 2)
+                                    val paddingH = max(2f, expWidth * 0.03f)
+                                    val paddingV = max(2f, expHeight * 0.03f)
+                                    val availWidth = max(8, (expWidth - paddingH * 2).toInt())
+                                    val availHeight = max(8f, expHeight - paddingV * 2)
 
-                                    val cacheKey = "${block.id}_${displayText}_${width}_${height}_${block.textColor}"
+                                    val origLineCount = max(1, block.lineBoxes.size)
+                                    val cacheKey = "${block.id}_${displayText}_${expWidth}_${expHeight}_${block.textColor}_${origLineCount}"
                                     val cached = layoutCache[cacheKey]
 
                                     val (bestLayout, offsetYRel) = if (cached != null) {
                                         cached
                                     } else {
-                                        var textSize = min(height * 0.75f, width * 0.85f).coerceAtLeast(10f)
-                                        val minTextSize = 10f
                                         val textPaint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                                             color = block.textColor
                                             isFakeBoldText = true
                                         }
+
+                                        // 基于原文行数与平均行高动态估算字号基准，避免多行段落被压缩至极小字号
+                                        val avgLineHeight = expHeight.toFloat() / origLineCount
+                                        val lineBasedSize = if (origLineCount > 1) {
+                                            (avgLineHeight * 0.72f).coerceIn(12f, expHeight * 0.85f)
+                                        } else {
+                                            min(expHeight * 0.75f, expWidth * 0.85f).coerceAtLeast(10f)
+                                        }
+
+                                        var textSize = max(lineBasedSize, min(expHeight * 0.75f, expWidth * 0.85f)).coerceIn(10f, 120f)
+                                        val minTextSize = 10f
 
                                         var selectedLayout: android.text.StaticLayout? = null
                                         while (textSize >= minTextSize) {
@@ -319,8 +341,9 @@ fun ImageTranslateScreen(
                                                 textPaint,
                                                 availWidth
                                             )
-                                                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                                                .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL) // 自然左对齐，彻底告别诗歌居中
                                                 .setIncludePad(false)
+                                                .setLineSpacing(0f, 1.08f)
                                                 .build()
 
                                             if (layout.height <= availHeight) {
@@ -340,25 +363,29 @@ fun ImageTranslateScreen(
                                                 textPaint,
                                                 availWidth
                                             )
-                                                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                                                .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
                                                 .setIncludePad(false)
+                                                .setLineSpacing(0f, 1.08f)
                                                 .build()
                                         }
-                                        val relY = paddingV + max(0f, (availHeight - finalLayout.height) / 2f)
+
+                                        // 垂直方向：多行段落从框顶部对齐自然向右向下排布，单行居中
+                                        val isSingleLine = finalLayout.lineCount == 1
+                                        val relY = ImageOverlayHelper.computeVerticalOffset(availHeight, finalLayout.height.toFloat(), paddingV, isSingleLine)
                                         val pair = Pair(finalLayout, relY)
                                         layoutCache[cacheKey] = pair
                                         pair
                                     }
 
-                                    // 严格边界裁剪与居中绘制（彻底杜绝文字溢出框外涂抹原图）
+                                    // 严格边界裁剪与自然左对齐绘制
                                     nativeCanvas.save()
                                     nativeCanvas.clipRect(
-                                        rect.left.toFloat(),
-                                        rect.top.toFloat(),
-                                        rect.right.toFloat(),
-                                        rect.bottom.toFloat()
+                                        expRect.left.toFloat(),
+                                        expRect.top.toFloat(),
+                                        expRect.right.toFloat(),
+                                        expRect.bottom.toFloat()
                                     )
-                                    nativeCanvas.translate(rect.left + paddingH, rect.top + offsetYRel)
+                                    nativeCanvas.translate(expRect.left + paddingH, expRect.top + offsetYRel)
                                     bestLayout.draw(nativeCanvas)
                                     nativeCanvas.restore()
                                 }

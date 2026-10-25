@@ -379,4 +379,143 @@ class ImageTranslationTest {
             throw IllegalStateException("Should not swallow")
         }
     }
+
+    @Test
+    fun testMaskOpacityIsFull100Percent() {
+        // 验证遮罩画笔不透明度必须为 255 (100% 不透明)，彻底杜绝原图文字透过 94% 半透明产生鬼影重影
+        assertEquals(255, ImageOverlayHelper.MASK_ALPHA)
+        assertTrue("Mask alpha must be exactly 255 (0xFF)", ImageOverlayHelper.MASK_ALPHA == 0xFF)
+    }
+
+    @Test
+    fun testRectSafetyOutsetExpansion() {
+        // 1. 标准外扩测试：向外安全膨胀 3 像素 (DEFAULT_OUTSET_PX)
+        val origRect = com.translate.app.data.model.OverlayRect(left = 100, top = 200, right = 500, bottom = 400)
+        val expanded = origRect.expand(outsetX = 3, outsetY = 3)
+        assertEquals(97, expanded.left)
+        assertEquals(197, expanded.top)
+        assertEquals(503, expanded.right)
+        assertEquals(403, expanded.bottom)
+
+        // 2. 图像左上边界保护：外扩不能小于 0
+        val boundaryTopLeft = com.translate.app.data.model.OverlayRect(left = 1, top = 2, right = 50, bottom = 60)
+        val clampTopLeft = boundaryTopLeft.expand(outsetX = 3, outsetY = 3, maxWidth = 1000, maxHeight = 1000)
+        assertEquals(0, clampTopLeft.left)
+        assertEquals(0, clampTopLeft.top)
+        assertEquals(53, clampTopLeft.right)
+        assertEquals(63, clampTopLeft.bottom)
+
+        // 3. 图像右下边界保护：外扩不能超出图片最大尺寸
+        val boundaryBottomRight = com.translate.app.data.model.OverlayRect(left = 950, top = 980, right = 999, bottom = 1000)
+        val clampBottomRight = boundaryBottomRight.expand(outsetX = 3, outsetY = 3, maxWidth = 1000, maxHeight = 1000)
+        assertEquals(947, clampBottomRight.left)
+        assertEquals(977, clampBottomRight.top)
+        assertEquals(1000, clampBottomRight.right)
+        assertEquals(1000, clampBottomRight.bottom)
+
+        // 4. OverlayRect expandOverlayRect 辅助方法一致性测试
+        val overlayRect = com.translate.app.data.model.OverlayRect(50, 60, 150, 160)
+        val overlayExpanded = ImageOverlayHelper.expandOverlayRect(overlayRect, outsetX = 4, outsetY = 4, maxWidth = 200, maxHeight = 200)
+        assertEquals(46, overlayExpanded.left)
+        assertEquals(56, overlayExpanded.top)
+        assertEquals(154, overlayExpanded.right)
+        assertEquals(164, overlayExpanded.bottom)
+    }
+
+    @Test
+    fun testComputeCompactBoundingBoxFromLines() {
+        // 模拟消息气泡：ML Kit textBlock.boundingBox 原本过宽 (100, 100, 800, 300) 溢出到气泡外空白区
+        // 但 actual lines 只有 (100, 100, 350, 180) 和 (100, 200, 320, 280)
+        val line1 = com.translate.app.data.model.OverlayRect(100, 100, 350, 180)
+        val line2 = com.translate.app.data.model.OverlayRect(100, 200, 320, 280)
+        val lines = listOf(line1, line2)
+
+        val compactBox = ImageOverlayHelper.computeCompactBoundingBox(lines)
+        assertEquals(100, compactBox.left)
+        assertEquals(100, compactBox.top)
+        assertEquals(350, compactBox.right) // 紧凑宽度为 350，而不是粗糙大框的 800！
+        assertEquals(280, compactBox.bottom)
+
+        // 模拟长段落：所有行紧密包含，覆盖到最后一行的底部
+        val paraLine1 = com.translate.app.data.model.OverlayRect(50, 500, 600, 540)
+        val paraLine2 = com.translate.app.data.model.OverlayRect(50, 545, 590, 585)
+        val paraLine3 = com.translate.app.data.model.OverlayRect(50, 590, 420, 630)
+        val paraLines = listOf(paraLine1, paraLine2, paraLine3)
+
+        val paraBox = ImageOverlayHelper.computeCompactBoundingBox(paraLines)
+        assertEquals(50, paraBox.left)
+        assertEquals(500, paraBox.top)
+        assertEquals(600, paraBox.right)
+        assertEquals(630, paraBox.bottom) // 完整覆盖到第三行底，不漏字
+
+        // 空 lines fallback 测试
+        val fallback = com.translate.app.data.model.OverlayRect(10, 10, 50, 50)
+        val emptyCompact = ImageOverlayHelper.computeCompactBoundingBox(emptyList(), fallback)
+        assertEquals(fallback, emptyCompact)
+    }
+
+    @Test
+    fun testLeftAlignmentAndVerticalOffset() {
+        // 1. 多行段落排版：必须从顶部内边距自然向下排布，严禁垂直居中悬空
+        val availHeight = 300f
+        val layoutHeightMultiLine = 120f
+        val paddingV = 10f
+        val multiLineOffset = ImageOverlayHelper.computeVerticalOffset(
+            availHeight = availHeight,
+            layoutHeight = layoutHeightMultiLine,
+            paddingV = paddingV,
+            isSingleLine = false
+        )
+        // 多行必须紧贴顶部 (paddingV = 10f)，绝不能是居中 (10 + (300 - 120) / 2 = 100f)！
+        assertEquals(10f, multiLineOffset, 0.001f)
+
+        // 2. 单行短文本排版：垂直居中更加整洁美观
+        val layoutHeightSingleLine = 30f
+        val singleLineOffset = ImageOverlayHelper.computeVerticalOffset(
+            availHeight = availHeight,
+            layoutHeight = layoutHeightSingleLine,
+            paddingV = paddingV,
+            isSingleLine = true
+        )
+        val expectedCentered = paddingV + (availHeight - layoutHeightSingleLine) / 2f // 10 + 135 = 145f
+        assertEquals(expectedCentered, singleLineOffset, 0.001f)
+    }
+
+    @Test
+    fun testDynamicFontSizeAdaptationByLineCount() {
+        // 多行长文本排版测试：
+        // 区域高 200，宽 400。原段落有 4 行，平均行高 50px。
+        val text = "这是一个经过高精度实景原位翻译的大段中文描述文字，内容丰富且通顺自然。"
+        val singleLineSize = ImageOverlayHelper.calculateAutoFitFontSize(
+            text = text,
+            boxWidth = 400f,
+            boxHeight = 200f,
+            lineCount = 1
+        )
+
+        val multiLineSize = ImageOverlayHelper.calculateAutoFitFontSize(
+            text = text,
+            boxWidth = 400f,
+            boxHeight = 200f,
+            lineCount = 4
+        )
+
+        // 多行段落应基于平均行高 (50 * 0.72 = 36px) 进行适配，字号显著大于单纯面积字符比的字号
+        assertTrue("Multi-line size ($multiLineSize) should be adapted to line height and >= 30f", multiLineSize >= 30f)
+        assertTrue("Multi-line size should not exceed box boundary limit", multiLineSize <= 200f * 0.85f)
+    }
+
+    @Test
+    fun testNormalizeParagraphText() {
+        // 孤立换行连贯排版
+        val rawOcrText = "This is a sentence\nthat was broken across\nmultiple lines."
+        val normalized = ImageOverlayHelper.normalizeParagraphText(rawOcrText)
+        assertEquals("This is a sentence that was broken across multiple lines.", normalized)
+
+        // 多段落双换行保留
+        val multiParagraph = "Paragraph one line 1\nline 2\n\nParagraph two line 1\nline 2"
+        val normalizedMulti = ImageOverlayHelper.normalizeParagraphText(multiParagraph)
+        assertTrue(normalizedMulti.contains("Paragraph one line 1 line 2"))
+        assertTrue(normalizedMulti.contains("Paragraph two line 1 line 2"))
+    }
 }

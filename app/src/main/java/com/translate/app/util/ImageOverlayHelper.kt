@@ -3,6 +3,7 @@ package com.translate.app.util
 import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
+import com.translate.app.data.model.OverlayRect
 import com.translate.app.data.model.TranslatedBlock
 import kotlin.math.max
 import kotlin.math.min
@@ -11,6 +12,10 @@ import kotlin.math.min
  * 原位图像贴字翻译的数学计算、坐标变换与辅助算法工具
  */
 object ImageOverlayHelper {
+
+    const val MASK_ALPHA = 255 // 100% 完全不透明度，彻底杜绝原图字迹透光重影
+    const val DEFAULT_OUTSET_PX = 3 // 矩形安全外扩默认 3 像素，彻底覆盖笔画边缘与抗锯齿
+    const val MIN_FONT_SIZE = 10f
 
     data class OverlayPoint(val x: Float, val y: Float) {
         fun toPointF(): PointF = PointF(x, y)
@@ -111,12 +116,99 @@ object ImageOverlayHelper {
     }
 
     /**
-     * 针对指定矩形框自适应计算合适字号
+     * 将 Android Rect 向外做安全膨胀（外扩 outset），彻底覆盖边缘抗锯齿墨迹，并限制在图像边界内
+     */
+    fun expandRect(
+        rect: Rect,
+        outsetX: Int = DEFAULT_OUTSET_PX,
+        outsetY: Int = DEFAULT_OUTSET_PX,
+        maxWidth: Int = Int.MAX_VALUE,
+        maxHeight: Int = Int.MAX_VALUE
+    ): Rect {
+        val left = (rect.left - outsetX).coerceAtLeast(0)
+        val top = (rect.top - outsetY).coerceAtLeast(0)
+        val right = (rect.right + outsetX).coerceAtMost(maxWidth)
+        val bottom = (rect.bottom + outsetY).coerceAtMost(maxHeight)
+        return Rect(left, top, max(left, right), max(top, bottom))
+    }
+
+    /**
+     * 将 OverlayRect 向外做安全膨胀（跨平台纯 Kotlin 实现）
+     */
+    fun expandOverlayRect(
+        rect: OverlayRect,
+        outsetX: Int = DEFAULT_OUTSET_PX,
+        outsetY: Int = DEFAULT_OUTSET_PX,
+        maxWidth: Int = Int.MAX_VALUE,
+        maxHeight: Int = Int.MAX_VALUE
+    ): OverlayRect {
+        return rect.expand(outsetX, outsetY, maxWidth, maxHeight)
+    }
+
+    /**
+     * 根据多行 Lines 的包围盒精确计算紧凑外接包围盒，杜绝 ML Kit textBlock.boundingBox 溢出空白区
+     */
+    fun computeCompactBoundingBox(
+        lineBoxes: List<OverlayRect>,
+        fallback: OverlayRect? = null
+    ): OverlayRect {
+        if (lineBoxes.isEmpty()) {
+            return fallback ?: OverlayRect(0, 0, 0, 0)
+        }
+        var minLeft = Int.MAX_VALUE
+        var minTop = Int.MAX_VALUE
+        var maxRight = Int.MIN_VALUE
+        var maxBottom = Int.MIN_VALUE
+        for (box in lineBoxes) {
+            minLeft = minOf(minLeft, box.left)
+            minTop = minOf(minTop, box.top)
+            maxRight = maxOf(maxRight, box.right)
+            maxBottom = maxOf(maxBottom, box.bottom)
+        }
+        return if (minLeft <= maxRight && minTop <= maxBottom) {
+            OverlayRect(minLeft, minTop, maxRight, maxBottom)
+        } else {
+            fallback ?: OverlayRect(0, 0, 0, 0)
+        }
+    }
+
+    /**
+     * 计算文字排版的垂直相对偏移：
+     * - 多行段落从框顶部对齐（保持微量内边距），自然向右向下排布，杜绝垂直强制居中导致的上下大片悬空；
+     * - 单行短文本垂直居中更端正美观。
+     */
+    fun computeVerticalOffset(
+        availHeight: Float,
+        layoutHeight: Float,
+        paddingV: Float,
+        isSingleLine: Boolean
+    ): Float {
+        return if (isSingleLine) {
+            paddingV + max(0f, (availHeight - layoutHeight) / 2f)
+        } else {
+            paddingV
+        }
+    }
+
+    /**
+     * 规范化段落文本：去除段落内部孤立的硬断行，使多行文本能够根据可用宽度自然折行，释放垂直排版空间
+     */
+    fun normalizeParagraphText(text: String): String {
+        if (!text.contains("\n")) return text.trim()
+        val paragraphs = text.split(Regex("\n{2,}"))
+        return paragraphs.joinToString("\n\n") { p ->
+            p.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
+        }.trim()
+    }
+
+    /**
+     * 针对指定矩形框自适应计算合适字号（支持基于原行数与行高动态适配）
      */
     fun calculateAutoFitFontSize(
         text: String,
         boxWidth: Float,
         boxHeight: Float,
+        lineCount: Int = 1,
         maxFontSize: Float = Float.MAX_VALUE,
         minFontSize: Float = 10f
     ): Float {
@@ -125,9 +217,32 @@ object ImageOverlayHelper {
         // 估算：长宽面积与字符数量的关系
         val areaPerChar = (boxWidth * boxHeight) / charCount.toFloat()
         val estimatedSize = kotlin.math.sqrt(areaPerChar.toDouble()).toFloat() * 0.85f
+
+        // 若多行段落，结合平均行高动态适配，让译文自然舒展填满原文字区域
+        val effectiveEstimated = if (lineCount > 1) {
+            val avgLineHeight = boxHeight / lineCount.toFloat()
+            val targetSizeByLine = avgLineHeight * 0.72f
+            max(estimatedSize, targetSizeByLine)
+        } else {
+            estimatedSize
+        }
+
         val upperLimit = min(maxFontSize, boxHeight * 0.85f)
         val safeMin = min(minFontSize, upperLimit)
-        return estimatedSize.coerceIn(safeMin, max(safeMin, upperLimit))
+        return effectiveEstimated.coerceIn(safeMin, max(safeMin, upperLimit))
+    }
+
+    /**
+     * 重载版本，保持向后兼容
+     */
+    fun calculateAutoFitFontSize(
+        text: String,
+        boxWidth: Float,
+        boxHeight: Float,
+        maxFontSize: Float,
+        minFontSize: Float
+    ): Float {
+        return calculateAutoFitFontSize(text, boxWidth, boxHeight, 1, maxFontSize, minFontSize)
     }
 
     /**
