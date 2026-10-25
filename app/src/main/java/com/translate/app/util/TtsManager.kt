@@ -72,8 +72,8 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
                 }
 
                 override fun onDone(utteranceId: String?) {
-                    // 若队列全部播完，重置状态
-                    if (utteranceId?.endsWith("_last") == true || utteranceId?.startsWith("tts_") == true) {
+                    // 若分片全部播完（仅在末尾分片或唯一分片时），重置朗读状态
+                    if (utteranceId?.endsWith("_last") == true) {
                         _isSpeaking.value = false
                     }
                 }
@@ -238,29 +238,40 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
-    /**
-     * 将长文本按照标点符号合理分句切片，保证长文朗读不断句、不卡死
-     */
-    private fun splitTextIntoChunks(text: String, maxChunkSize: Int): List<String> {
-        if (text.length <= maxChunkSize) {
-            return listOf(text)
-        }
-
-        val chunks = mutableListOf<String>()
-        val sentenceDelimiters = Regex("([。！？!?；;\\n])")
-        val tokens = text.split(sentenceDelimiters)
-
-        val sb = StringBuilder()
-        for (token in tokens) {
-            if (sb.length + token.length > maxChunkSize && sb.isNotEmpty()) {
-                chunks.add(sb.toString().trim())
-                sb.clear()
+    companion object {
+        /**
+         * 将长文本按照标点符号合理分句切片，保留标点符号停顿，防止超过系统限制 (如 Android 4000 字符限制)
+         */
+        fun splitTextIntoChunks(text: String, maxChunkSize: Int = 500): List<String> {
+            if (text.length <= maxChunkSize) {
+                return listOf(text)
             }
-            sb.append(token)
+
+            val chunks = mutableListOf<String>()
+            val sb = StringBuilder()
+
+            for (ch in text) {
+                sb.append(ch)
+                val isPunctuation = ch in "。！？!?；;…\n"
+
+                // 遇到断句标点且累积长度达到合适规模，或者单段逼近 maxChunkSize 时切分
+                if ((isPunctuation && sb.length >= 80) || sb.length >= maxChunkSize) {
+                    val part = sb.toString().trim()
+                    if (part.isNotEmpty()) {
+                        chunks.add(part)
+                    }
+                    sb.clear()
+                }
+            }
+
+            if (sb.isNotEmpty()) {
+                val remaining = sb.toString().trim()
+                if (remaining.isNotEmpty()) {
+                    chunks.add(remaining)
+                }
+            }
+
+            return if (chunks.isEmpty()) listOf(text) else chunks
         }
-        if (sb.isNotEmpty()) {
-            chunks.add(sb.toString().trim())
-        }
-        return if (chunks.isEmpty()) listOf(text) else chunks
     }
 }

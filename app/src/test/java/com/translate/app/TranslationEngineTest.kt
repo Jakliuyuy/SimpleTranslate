@@ -215,5 +215,45 @@ class TranslationEngineTest {
         assertEquals(com.translate.app.data.model.TranslationEngineType.GOOGLE, googleType)
         assertEquals("Google 翻译 (内置/免Key)", googleType.title)
     }
+
+    @Test
+    fun testLanguageFromCodeWithRegionalAndAliases() {
+        // 区域代码解析
+        assertEquals(Language.ZH, Language.fromCode("zh-CN"))
+        assertEquals(Language.ZH, Language.fromCode("zh-TW"))
+        assertEquals(Language.ZH, Language.fromCode("zh-Hans"))
+        assertEquals(Language.ZH, Language.fromCode("cht"))
+        assertEquals(Language.EN, Language.fromCode("en-US"))
+        assertEquals(Language.EN, Language.fromCode("en-GB"))
+
+        // 常见平台别名
+        assertEquals(Language.JA, Language.fromCode("jp"))
+        assertEquals(Language.KO, Language.fromCode("kor"))
+        assertEquals(Language.FR, Language.fromCode("fra"))
+        assertEquals(Language.ES, Language.fromCode("spa"))
+        assertEquals(Language.AR, Language.fromCode("ara"))
+        assertEquals(Language.VI, Language.fromCode("vie"))
+    }
+
+    @Test
+    fun testTtsSplitTextIntoChunksPreservesPunctuationAndLimitsSize() {
+        val longArticle = "第一句话包含标点符号。第二句话也有标点符号！第三句话则是问号？" +
+                "第四句话继续测试分句，看看标点符号是否会丢失；第五句话也是如此。\n" +
+                "最后一段测试换行符。"
+        val chunks = com.translate.app.util.TtsManager.splitTextIntoChunks(longArticle, 100)
+
+        assertTrue(chunks.isNotEmpty())
+        // 验证标点符号被完整保留
+        val combined = chunks.joinToString("")
+        assertTrue(combined.contains("。"))
+        assertTrue(combined.contains("！"))
+        assertTrue(combined.contains("？"))
+        assertTrue(combined.contains("；"))
+
+        // 验证每个分片均不超过设定上限
+        chunks.forEach { chunk ->
+            assertTrue(chunk.length <= 100)
+        }
+    }
 }
 

@@ -96,9 +96,40 @@ data class Language(
         )
 
         fun fromCode(code: String): Language {
-            return SUPPORTED_SOURCE_LANGUAGES.firstOrNull {
-                it.code.equals(code, ignoreCase = true)
-            } ?: EN
+            if (code.isBlank()) return EN
+            val clean = code.trim().lowercase()
+
+            // 1. 直接精确匹配
+            SUPPORTED_SOURCE_LANGUAGES.firstOrNull { it.code.equals(clean, ignoreCase = true) }?.let { return it }
+
+            // 2. 常见区域代码与平台 API 别名映射
+            val alias = when (clean) {
+                "zh-cn", "zh-hans", "zh-sg", "zh-cmn", "zh-cmn-hans" -> "zh"
+                "zh-tw", "zh-hk", "zh-mo", "zh-hant", "cht" -> "zh"
+                "en-us", "en-gb", "en-au", "en-ca" -> "en"
+                "ja-jp", "jp" -> "ja"
+                "ko-kr", "kor" -> "ko"
+                "fr-fr", "fra" -> "fr"
+                "de-de" -> "de"
+                "es-es", "spa" -> "es"
+                "ru-ru" -> "ru"
+                "it-it" -> "it"
+                "pt-pt", "pt-br" -> "pt"
+                "vi-vn", "vie" -> "vi"
+                "th-th" -> "th"
+                "ar-sa", "ar-ae", "ara" -> "ar"
+                else -> null
+            }
+            if (alias != null) {
+                SUPPORTED_SOURCE_LANGUAGES.firstOrNull { it.code.equals(alias, ignoreCase = true) }?.let { return it }
+            }
+
+            // 3. 按语言前缀提取 (如 "es-419" -> "es", "en_US" -> "en")
+            val prefix = clean.split('-', '_')[0]
+            SUPPORTED_SOURCE_LANGUAGES.firstOrNull { it.code.equals(prefix, ignoreCase = true) }?.let { return it }
+
+            // 4. 包含 "zh" 判定为中文，否则保底英文
+            return if (clean.contains("zh")) ZH else EN
         }
     }
 }

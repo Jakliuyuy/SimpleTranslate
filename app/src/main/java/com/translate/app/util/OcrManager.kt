@@ -35,7 +35,7 @@ object OcrManager {
         onError: (String) -> Unit
     ) {
         try {
-            val image = InputImage.fromFilePath(context, imageUri)
+            val image = loadSafeInputImage(context, imageUri)
             recognizer.process(image)
                 .addOnSuccessListener { visionText ->
                     val rawText = visionText.text
@@ -49,9 +49,46 @@ object OcrManager {
                 .addOnFailureListener { e ->
                     onError("图片文字识别失败: ${e.localizedMessage ?: "未知异常"}")
                 }
-        } catch (e: Exception) {
-            onError("读取图片失败: ${e.localizedMessage ?: "无法访问所选图片"}")
+        } catch (t: Throwable) {
+            onError("读取图片失败: ${t.localizedMessage ?: "图片尺寸过大或无权访问"}")
         }
+    }
+
+    /**
+     * 安全加载图片以杜绝极端大图引起的 OutOfMemoryError (OOM)
+     */
+    private fun loadSafeInputImage(context: Context, uri: Uri): InputImage {
+        // 先检查图片原始尺寸
+        val options = android.graphics.BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+        context.contentResolver.openInputStream(uri)?.use { stream ->
+            android.graphics.BitmapFactory.decodeStream(stream, null, options)
+        }
+
+        val maxDim = maxOf(options.outWidth, options.outHeight)
+        // 若图片尺寸在安全范围内 (<= 2048)，直接使用 ML Kit 默认高效通道
+        if (maxDim <= 2048 && options.outWidth > 0 && options.outHeight > 0) {
+            return InputImage.fromFilePath(context, uri)
+        }
+
+        // 计算采样率 inSampleSize
+        var inSampleSize = 1
+        val reqDim = 1920
+        while ((maxDim / inSampleSize) > reqDim) {
+            inSampleSize *= 2
+        }
+
+        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+            this.inSampleSize = inSampleSize
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }
+
+        val sampledBitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+            android.graphics.BitmapFactory.decodeStream(stream, null, decodeOptions)
+        } ?: throw IllegalArgumentException("无法打开指定图片数据流")
+
+        return InputImage.fromBitmap(sampledBitmap, 0)
     }
 
     /**

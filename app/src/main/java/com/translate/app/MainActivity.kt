@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -75,8 +76,9 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
     var pendingSpeechLang by remember { mutableStateOf<Language?>(null) }
 
     // 图片翻译选择 Sheet
-    var showImagePickerSheet by remember { mutableStateOf(false) }
-    var currentCameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var showImagePickerSheet by rememberSaveable { mutableStateOf(false) }
+    var currentCameraPhotoUriString by rememberSaveable { mutableStateOf<String?>(null) }
+    val currentCameraPhotoUri = currentCameraPhotoUriString?.let { Uri.parse(it) }
 
     // ==========================================
     // 1. 语音输入 (STT) 回调与权限处理
@@ -148,7 +150,7 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
     ) { isGranted ->
         if (isGranted) {
             startCameraCapture(context) { uri ->
-                currentCameraPhotoUri = uri
+                currentCameraPhotoUriString = uri.toString()
                 takePhotoLauncher.launch(uri)
             }
         } else {
@@ -184,7 +186,7 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
 
         if (hasPermission) {
             startCameraCapture(context) { uri ->
-                currentCameraPhotoUri = uri
+                currentCameraPhotoUriString = uri.toString()
                 takePhotoLauncher.launch(uri)
             }
         } else {
@@ -301,6 +303,10 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
 private fun startCameraCapture(context: Context, onUriReady: (Uri) -> Unit) {
     try {
         val photoFile = File(context.cacheDir, "camera_photo_${System.currentTimeMillis()}.jpg")
+        photoFile.parentFile?.mkdirs()
+        if (!photoFile.exists()) {
+            photoFile.createNewFile()
+        }
         val photoUri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",

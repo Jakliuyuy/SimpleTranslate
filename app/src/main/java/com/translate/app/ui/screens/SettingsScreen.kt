@@ -238,13 +238,19 @@ fun SettingsScreen(
                             if (googleMode == "proxy") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
                             else Color.Transparent
                         )
-                        .clickable { googleMode = "proxy" }
+                        .clickable {
+                            googleMode = "proxy"
+                            viewModel.saveGoogleConfig("proxy", googleProxyUrl)
+                        }
                         .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
                         selected = googleMode == "proxy",
-                        onClick = { googleMode = "proxy" },
+                        onClick = {
+                            googleMode = "proxy"
+                            viewModel.saveGoogleConfig("proxy", googleProxyUrl)
+                        },
                         colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
@@ -270,13 +276,19 @@ fun SettingsScreen(
                             if (googleMode == "direct") MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
                             else Color.Transparent
                         )
-                        .clickable { googleMode = "direct" }
+                        .clickable {
+                            googleMode = "direct"
+                            viewModel.saveGoogleConfig("direct", googleProxyUrl)
+                        }
                         .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     RadioButton(
                         selected = googleMode == "direct",
-                        onClick = { googleMode = "direct" },
+                        onClick = {
+                            googleMode = "direct"
+                            viewModel.saveGoogleConfig("direct", googleProxyUrl)
+                        },
                         colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colorScheme.primary)
                     )
                     Spacer(modifier = Modifier.width(6.dp))

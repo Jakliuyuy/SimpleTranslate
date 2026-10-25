@@ -163,8 +163,8 @@ class GoogleTranslationEngine(
             }
 
             val dataObj = jsonObject.getAsJsonObject("data")
-            val translatedText = dataObj.get("translatedText")?.asString ?: ""
-            val detectedSource = dataObj.get("detectedSource")?.asString
+            val translatedText = dataObj.get("translatedText")?.takeIf { !it.isJsonNull }?.asString ?: ""
+            val detectedSource = dataObj.get("detectedSource")?.takeIf { !it.isJsonNull }?.asString
 
             val finalSource = if (from == Language.AUTO && !detectedSource.isNullOrBlank()) {
                 Language.fromCode(detectedSource)
@@ -231,7 +231,7 @@ class GoogleTranslationEngine(
             }
 
             val jsonArray = gson.fromJson(responseBody, JsonArray::class.java)
-            if (jsonArray == null || jsonArray.size() == 0) {
+            if (jsonArray == null || jsonArray.size() == 0 || !jsonArray.get(0).isJsonArray) {
                 return TranslationResult(
                     originalText = text,
                     translatedText = "",
@@ -246,15 +246,18 @@ class GoogleTranslationEngine(
             val sentences = jsonArray.get(0).asJsonArray
             val stringBuilder = StringBuilder()
             for (i in 0 until sentences.size()) {
-                val sentenceObj = sentences.get(i).asJsonArray
-                if (sentenceObj.size() > 0 && !sentenceObj.get(0).isJsonNull) {
-                    stringBuilder.append(sentenceObj.get(0).asString)
+                val element = sentences.get(i)
+                if (element.isJsonArray) {
+                    val sentenceObj = element.asJsonArray
+                    if (sentenceObj.size() > 0 && !sentenceObj.get(0).isJsonNull) {
+                        stringBuilder.append(sentenceObj.get(0).asString)
+                    }
                 }
             }
             val translatedText = stringBuilder.toString()
 
             var detectedSource = fromCode
-            if (jsonArray.size() > 2 && jsonArray.get(2).isJsonPrimitive) {
+            if (jsonArray.size() > 2 && !jsonArray.get(2).isJsonNull && jsonArray.get(2).isJsonPrimitive) {
                 detectedSource = jsonArray.get(2).asString
             }
 
