@@ -59,9 +59,10 @@ class ImageTranslateViewModel : ViewModel() {
             targetLanguage = initialTargetLang
         )
 
+        val appContext = context.applicationContext
         viewModelScope.launch(Dispatchers.IO) {
             OcrManager.recognizeBlocks(
-                context = context,
+                context = appContext,
                 imageUri = uri,
                 onSuccess = { blocks, bitmap ->
                     // 智能推断语种
@@ -151,7 +152,8 @@ class ImageTranslateViewModel : ViewModel() {
                                 } else {
                                     raw
                                 }
-                            } catch (_: Exception) {
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
                                 raw
                             }
                         }
@@ -223,6 +225,29 @@ class ImageTranslateViewModel : ViewModel() {
     fun setSourceLanguage(newSource: Language) {
         if (_uiState.value.sourceLanguage == newSource) return
         _uiState.update { it.copy(sourceLanguage = newSource) }
+        retranslateCurrentBlocks()
+    }
+
+    /**
+     * 一键互换源语言与目标语言并重新翻译 (Google 翻译同款)
+     */
+    fun swapLanguages() {
+        val currentSource = _uiState.value.sourceLanguage
+        val currentTarget = _uiState.value.targetLanguage
+
+        val newSource = currentTarget
+        val newTarget = if (currentSource == Language.AUTO) {
+            Language.ZH
+        } else {
+            currentSource
+        }
+
+        _uiState.update {
+            it.copy(
+                sourceLanguage = newSource,
+                targetLanguage = newTarget
+            )
+        }
         retranslateCurrentBlocks()
     }
 

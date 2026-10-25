@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +59,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -164,6 +166,10 @@ fun ImageTranslateScreen(
             val containerHeight = constraints.maxHeight.toFloat()
             val bitmap = uiState.originalBitmap
 
+            val currentScale by rememberUpdatedState(userScale)
+            val currentOffset by rememberUpdatedState(userOffset)
+            val layoutCache = remember { HashMap<String, Pair<android.text.StaticLayout, Float>>() }
+
             if (bitmap != null) {
                 val fit = remember(bitmap.width, bitmap.height, containerWidth, containerHeight) {
                     ImageOverlayHelper.computeFitTransform(
@@ -177,11 +183,11 @@ fun ImageTranslateScreen(
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
-                        .pointerInput(Unit) {
+                        .pointerInput(fit, containerWidth, containerHeight) {
                             // 双击缩放与单击命中检测
                             detectTapGestures(
                                 onDoubleTap = { tapOffset ->
-                                    if (userScale > 1.2f) {
+                                    if (currentScale > 1.2f) {
                                         userScale = 1.0f
                                         userOffset = Offset.Zero
                                     } else {
@@ -197,9 +203,9 @@ fun ImageTranslateScreen(
                                         screenX = tapOffset.x,
                                         screenY = tapOffset.y,
                                         fit = fit,
-                                        userScale = userScale,
-                                        userOffsetX = userOffset.x,
-                                        userOffsetY = userOffset.y,
+                                        userScale = currentScale,
+                                        userOffsetX = currentOffset.x,
+                                        userOffsetY = currentOffset.y,
                                         containerWidth = containerWidth,
                                         containerHeight = containerHeight
                                     )
@@ -284,58 +290,75 @@ fun ImageTranslateScreen(
                                         bgPaint
                                     )
 
-                                    // 计算自适应排版文本
+                                    // 计算自适应排版文本（利用排版缓存，杜绝手势重绘频繁 GC 掉帧）
                                     val paddingH = max(2f, width * 0.04f)
                                     val paddingV = max(2f, height * 0.04f)
                                     val availWidth = max(8, (width - paddingH * 2).toInt())
                                     val availHeight = max(8f, height - paddingV * 2)
 
-                                    var textSize = min(height * 0.7f, 48f)
-                                    val minTextSize = 10f
-                                    val textPaint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                        color = block.textColor
-                                        isFakeBoldText = true
-                                    }
+                                    val cacheKey = "${block.id}_${displayText}_${width}_${height}_${block.textColor}"
+                                    val cached = layoutCache[cacheKey]
 
-                                    var bestLayout: android.text.StaticLayout? = null
-                                    while (textSize >= minTextSize) {
-                                        textPaint.textSize = textSize
-                                        val layout = android.text.StaticLayout.Builder.obtain(
-                                            displayText,
-                                            0,
-                                            displayText.length,
-                                            textPaint,
-                                            availWidth
-                                        )
-                                            .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
-                                            .setIncludePad(false)
-                                            .build()
-
-                                        if (layout.height <= availHeight) {
-                                            bestLayout = layout
-                                            break
+                                    val (bestLayout, offsetYRel) = if (cached != null) {
+                                        cached
+                                    } else {
+                                        var textSize = min(height * 0.75f, width * 0.85f).coerceAtLeast(10f)
+                                        val minTextSize = 10f
+                                        val textPaint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                            color = block.textColor
+                                            isFakeBoldText = true
                                         }
-                                        textSize -= 2f
+
+                                        var selectedLayout: android.text.StaticLayout? = null
+                                        while (textSize >= minTextSize) {
+                                            textPaint.textSize = textSize
+                                            val layout = android.text.StaticLayout.Builder.obtain(
+                                                displayText,
+                                                0,
+                                                displayText.length,
+                                                textPaint,
+                                                availWidth
+                                            )
+                                                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                                                .setIncludePad(false)
+                                                .build()
+
+                                            if (layout.height <= availHeight) {
+                                                selectedLayout = layout
+                                                break
+                                            }
+                                            val step = if (textSize > 64f) 6f else if (textSize > 32f) 3f else 1.5f
+                                            textSize -= step
+                                        }
+
+                                        val finalLayout = selectedLayout ?: run {
+                                            textPaint.textSize = minTextSize
+                                            android.text.StaticLayout.Builder.obtain(
+                                                displayText,
+                                                0,
+                                                displayText.length,
+                                                textPaint,
+                                                availWidth
+                                            )
+                                                .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+                                                .setIncludePad(false)
+                                                .build()
+                                        }
+                                        val relY = paddingV + max(0f, (availHeight - finalLayout.height) / 2f)
+                                        val pair = Pair(finalLayout, relY)
+                                        layoutCache[cacheKey] = pair
+                                        pair
                                     }
 
-                                    if (bestLayout == null) {
-                                        textPaint.textSize = minTextSize
-                                        bestLayout = android.text.StaticLayout.Builder.obtain(
-                                            displayText,
-                                            0,
-                                            displayText.length,
-                                            textPaint,
-                                            availWidth
-                                        )
-                                            .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
-                                            .setIncludePad(false)
-                                            .build()
-                                    }
-
-                                    // 垂直居中绘制文字
-                                    val offsetY = rect.top + paddingV + (availHeight - bestLayout.height) / 2f
+                                    // 严格边界裁剪与居中绘制（彻底杜绝文字溢出框外涂抹原图）
                                     nativeCanvas.save()
-                                    nativeCanvas.translate(rect.left + paddingH, offsetY)
+                                    nativeCanvas.clipRect(
+                                        rect.left.toFloat(),
+                                        rect.top.toFloat(),
+                                        rect.right.toFloat(),
+                                        rect.bottom.toFloat()
+                                    )
+                                    nativeCanvas.translate(rect.left + paddingH, rect.top + offsetYRel)
                                     bestLayout.draw(nativeCanvas)
                                     nativeCanvas.restore()
                                 }
@@ -419,14 +442,17 @@ fun ImageTranslateScreen(
                             .padding(horizontal = 6.dp, vertical = 4.dp)
                     )
 
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = "翻译为",
-                        tint = Color(0xFF9CA3AF),
-                        modifier = Modifier
-                            .size(16.dp)
-                            .padding(horizontal = 2.dp)
-                    )
+                    IconButton(
+                        onClick = { viewModel.swapLanguages() },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = "互换语言",
+                            tint = Color(0xFF60A5FA),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
 
                     Text(
                         text = uiState.targetLanguage.displayName,
@@ -510,89 +536,95 @@ fun ImageTranslateScreen(
         // ==========================================
         // 3. 底部浮动控制栏 (显示译文 / 显示原文 对比切换)
         // ==========================================
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(bottom = 32.dp, start = 24.dp, end = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        AnimatedVisibility(
+            visible = uiState.selectedBlock == null,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            // 翻译进度指示器
-            if (uiState.isRetranslating) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xDD111827),
-                    modifier = Modifier.padding(bottom = 12.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 32.dp, start = 24.dp, end = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // 翻译进度指示器
+                if (uiState.isRetranslating) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xDD111827),
+                        modifier = Modifier.padding(bottom = 12.dp)
                     ) {
-                        CircularProgressIndicator(
-                            strokeWidth = 2.dp,
-                            color = Color(0xFF60A5FA),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "正在原位翻译 (${uiState.translatedBlockCount}/${uiState.totalBlockCount})...",
-                            color = Color(0xFFE5E7EB),
-                            fontSize = 12.sp
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                strokeWidth = 2.dp,
+                                color = Color(0xFF60A5FA),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "正在原位翻译 (${uiState.translatedBlockCount}/${uiState.totalBlockCount})...",
+                                color = Color(0xFFE5E7EB),
+                                fontSize = 12.sp
+                            )
+                        }
                     }
                 }
-            }
 
-            // 切换药丸组件：【显示译文】/【显示原文】
-            Surface(
-                shape = RoundedCornerShape(26.dp),
-                color = Color(0xEE1E293B),
-                modifier = Modifier
-                    .height(52.dp)
-                    .border(1.dp, Color(0x339CA3AF), RoundedCornerShape(26.dp))
-            ) {
-                Row(
-                    modifier = Modifier.padding(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                // 切换药丸组件：【显示译文】/【显示原文】
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = Color(0xEE1E293B),
+                    modifier = Modifier
+                        .height(52.dp)
+                        .border(1.dp, Color(0x339CA3AF), RoundedCornerShape(26.dp))
                 ) {
-                    val isTranslationMode = uiState.showTranslationOverlay
-
-                    // 显示译文
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(
-                                if (isTranslationMode) Color(0xFF2563EB)
-                                else Color.Transparent
-                            )
-                            .clickable { viewModel.setOverlayMode(true) }
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                    Row(
+                        modifier = Modifier.padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "显示译文",
-                            color = if (isTranslationMode) Color.White else Color(0xFF9CA3AF),
-                            fontWeight = if (isTranslationMode) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 14.sp
-                        )
-                    }
+                        val isTranslationMode = uiState.showTranslationOverlay
 
-                    // 显示原文
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(
-                                if (!isTranslationMode) Color(0xFF2563EB)
-                                else Color.Transparent
+                        // 显示译文
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(
+                                    if (isTranslationMode) Color(0xFF2563EB)
+                                    else Color.Transparent
+                                )
+                                .clickable { viewModel.setOverlayMode(true) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = "显示译文",
+                                color = if (isTranslationMode) Color.White else Color(0xFF9CA3AF),
+                                fontWeight = if (isTranslationMode) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 14.sp
                             )
-                            .clickable { viewModel.setOverlayMode(false) }
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = "显示原文",
-                            color = if (!isTranslationMode) Color.White else Color(0xFF9CA3AF),
-                            fontWeight = if (!isTranslationMode) FontWeight.Bold else FontWeight.Normal,
-                            fontSize = 14.sp
-                        )
+                        }
+
+                        // 显示原文
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(
+                                    if (!isTranslationMode) Color(0xFF2563EB)
+                                    else Color.Transparent
+                                )
+                                .clickable { viewModel.setOverlayMode(false) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp)
+                        ) {
+                            Text(
+                                text = "显示原文",
+                                color = if (!isTranslationMode) Color.White else Color(0xFF9CA3AF),
+                                fontWeight = if (!isTranslationMode) FontWeight.Bold else FontWeight.Normal,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
             }

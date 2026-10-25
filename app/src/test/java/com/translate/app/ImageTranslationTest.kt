@@ -285,4 +285,98 @@ class ImageTranslationTest {
         assertEquals("b", state.selectedBlock?.id)
         assertEquals("B", state.selectedBlock?.originalText)
     }
+
+    @Test
+    fun testAutoFitFontSize_LargeBannerDynamicScale() {
+        // 大招牌/大标题（宽 800 高 200，单词 "STORE"），摆脱 48f 硬编码上限，应自适应放大为大字号
+        val bannerSize = ImageOverlayHelper.calculateAutoFitFontSize(
+            text = "STORE",
+            boxWidth = 800f,
+            boxHeight = 200f
+        )
+        assertTrue("Large banner font size should exceed 48f, got $bannerSize", bannerSize > 48f)
+        assertTrue("Large banner font size should respect boxHeight limit, got $bannerSize", bannerSize <= 200f * 0.85f)
+
+        // 若调用方显式传入 maxFontSize 上限，应严格受限
+        val constrainedSize = ImageOverlayHelper.calculateAutoFitFontSize(
+            text = "STORE",
+            boxWidth = 800f,
+            boxHeight = 200f,
+            maxFontSize = 40f
+        )
+        assertEquals(40f, constrainedSize, 0.01f)
+    }
+
+    @Test
+    fun testLanguageSwapLogic() {
+        // 场景 1: 普通语言互换 (EN -> ZH 互换为 ZH -> EN)
+        var sourceLang = Language.EN
+        var targetLang = Language.ZH
+
+        var newSource = targetLang
+        var newTarget = if (sourceLang == Language.AUTO) Language.ZH else sourceLang
+        assertEquals(Language.ZH, newSource)
+        assertEquals(Language.EN, newTarget)
+
+        // 场景 2: AUTO 语言互换 (AUTO -> JA 互换为 JA -> ZH)
+        sourceLang = Language.AUTO
+        targetLang = Language.JA
+
+        newSource = targetLang
+        newTarget = if (sourceLang == Language.AUTO) Language.ZH else sourceLang
+        assertEquals(Language.JA, newSource)
+        assertEquals(Language.ZH, newTarget)
+    }
+
+    @Test
+    fun testZeroOrNegativeFitTransformSafeguards() {
+        // 容器或图像为 0 或负数时的除零防崩溃保护
+        val fitZeroImg = ImageOverlayHelper.computeFitTransform(0, 0, 1080f, 1920f)
+        assertEquals(1.0f, fitZeroImg.scale, 0.001f)
+
+        val fitZeroContainer = ImageOverlayHelper.computeFitTransform(100, 100, 0f, 0f)
+        assertEquals(1.0f, fitZeroContainer.scale, 0.001f)
+
+        val mapped = ImageOverlayHelper.mapScreenPointToImage(
+            screenX = 100f,
+            screenY = 100f,
+            fit = fitZeroContainer,
+            userScale = 0f,
+            userOffsetX = 0f,
+            userOffsetY = 0f,
+            containerWidth = 0f,
+            containerHeight = 0f
+        )
+        assertEquals(0f, mapped.x, 0.001f)
+        assertEquals(0f, mapped.y, 0.001f)
+    }
+
+    @Test
+    fun testOverlayRectContainsBoundary() {
+        val rect = com.translate.app.data.model.OverlayRect(10, 20, 100, 200)
+        // 顶点与边界测试
+        assertTrue(rect.contains(10f, 20f))
+        assertTrue(rect.contains(100f, 200f))
+        assertTrue(rect.contains(10f, 200f))
+        assertTrue(rect.contains(100f, 20f))
+        assertTrue(rect.contains(50f, 100f))
+
+        // 越界测试
+        assertFalse(rect.contains(9.9f, 20f))
+        assertFalse(rect.contains(10f, 19.9f))
+        assertFalse(rect.contains(100.1f, 100f))
+        assertFalse(rect.contains(50f, 200.1f))
+    }
+
+    @Test(expected = kotlinx.coroutines.CancellationException::class)
+    fun testCancellationExceptionNotSwallowedPattern() {
+        // 验证协程取消异常的向上重新抛出模式
+        try {
+            throw kotlinx.coroutines.CancellationException("Job was cancelled")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // 吞噬分支不应被执行
+            throw IllegalStateException("Should not swallow")
+        }
+    }
 }

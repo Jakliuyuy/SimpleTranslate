@@ -117,7 +117,7 @@ object ImageOverlayHelper {
         text: String,
         boxWidth: Float,
         boxHeight: Float,
-        maxFontSize: Float = 48f,
+        maxFontSize: Float = Float.MAX_VALUE,
         minFontSize: Float = 10f
     ): Float {
         if (text.isBlank() || boxWidth <= 0f || boxHeight <= 0f) return minFontSize
@@ -125,7 +125,9 @@ object ImageOverlayHelper {
         // 估算：长宽面积与字符数量的关系
         val areaPerChar = (boxWidth * boxHeight) / charCount.toFloat()
         val estimatedSize = kotlin.math.sqrt(areaPerChar.toDouble()).toFloat() * 0.85f
-        return estimatedSize.coerceIn(minFontSize, min(maxFontSize, boxHeight * 0.8f))
+        val upperLimit = min(maxFontSize, boxHeight * 0.85f)
+        val safeMin = min(minFontSize, upperLimit)
+        return estimatedSize.coerceIn(safeMin, max(safeMin, upperLimit))
     }
 
     /**

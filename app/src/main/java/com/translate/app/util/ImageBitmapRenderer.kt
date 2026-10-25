@@ -56,14 +56,14 @@ object ImageBitmapRenderer {
                 bgPaint
             )
 
-            // 2. 自适应计算文本排版
+            // 2. 自适应计算文本排版（摆脱 48f 硬编码限制，支持大图与大招牌高保真渲染）
             val paddingH = max(2f, width * 0.04f)
             val paddingV = max(2f, height * 0.04f)
             val availWidth = max(8, (width - paddingH * 2).toInt())
             val availHeight = max(8f, height - paddingV * 2)
 
             var bestLayout: StaticLayout? = null
-            var textSize = min(height * 0.7f, 48f)
+            var textSize = min(height * 0.75f, width * 0.85f).coerceAtLeast(10f)
             val minTextSize = 10f
 
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -82,7 +82,8 @@ object ImageBitmapRenderer {
                     bestLayout = layout
                     break
                 }
-                textSize -= 2f
+                val step = if (textSize > 64f) 6f else if (textSize > 32f) 3f else 1.5f
+                textSize -= step
             }
 
             if (bestLayout == null) {
@@ -93,9 +94,10 @@ object ImageBitmapRenderer {
                     .build()
             }
 
-            // 3. 垂直居中绘制文字
-            val offsetY = rect.top + paddingV + (availHeight - bestLayout.height) / 2f
+            // 3. 严格边界裁剪与居中绘制（彻底杜绝文字溢出框外涂抹原图）
+            val offsetY = rect.top + paddingV + max(0f, (availHeight - bestLayout.height) / 2f)
             canvas.save()
+            canvas.clipRect(rect.left.toFloat(), rect.top.toFloat(), rect.right.toFloat(), rect.bottom.toFloat())
             canvas.translate(rect.left + paddingH, offsetY)
             bestLayout.draw(canvas)
             canvas.restore()
