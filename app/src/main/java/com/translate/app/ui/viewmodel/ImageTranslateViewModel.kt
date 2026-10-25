@@ -41,6 +41,8 @@ class ImageTranslateViewModel : ViewModel() {
 
     private var translateJob: Job? = null
 
+    private var isTargetManuallyModified: Boolean = false
+
     /**
      * 加载图片并启动 OCR 识别与自动批量翻译
      */
@@ -51,6 +53,7 @@ class ImageTranslateViewModel : ViewModel() {
         initialTargetLang: Language = Language.ZH
     ) {
         translateJob?.cancel()
+        isTargetManuallyModified = false
         _uiState.value = ImageTranslateUiState(
             isLoading = true,
             loadingMessage = "正在读取图片并高精度识别文字...",
@@ -67,13 +70,13 @@ class ImageTranslateViewModel : ViewModel() {
                 onSuccess = { blocks, bitmap ->
                     // 智能推断语种
                     val combinedText = blocks.joinToString("\n") { it.originalText }
-                    var effSource = initialSourceLang
-                    var effTarget = initialTargetLang
+                    val currentSrc = _uiState.value.sourceLanguage
+                    var effTarget = _uiState.value.targetLanguage
 
-                    if (effSource == Language.AUTO) {
+                    // 若用户未手动修改过目标语言且源语言为 AUTO，基于图片提取出的主体语言自动联动目标语言：
+                    // 主体是中文 -> 目标对齐为英文 (Language.EN)；主体是英文或其他外语 -> 目标对齐为中文 (Language.ZH)
+                    if (!isTargetManuallyModified && currentSrc == Language.AUTO) {
                         effTarget = Language.autoDetectTargetLanguage(combinedText, effTarget)
-                        val detected = Language.detectLanguage(combinedText)
-                        effSource = if (detected != Language.AUTO) detected else Language.EN
                     }
 
                     _uiState.update {
@@ -81,15 +84,15 @@ class ImageTranslateViewModel : ViewModel() {
                             isLoading = false,
                             originalBitmap = bitmap,
                             blocks = blocks,
-                            sourceLanguage = effSource,
+                            sourceLanguage = currentSrc, // 严格保持 AUTO 模式，绝不篡改抹杀！
                             targetLanguage = effTarget,
                             totalBlockCount = blocks.size,
                             translatedBlockCount = 0
                         )
                     }
 
-                    // 启动各文本块批量翻译
-                    startBatchTranslation(blocks, effSource, effTarget)
+                    // 启动各文本块批量翻译（effSource 为 AUTO 时直接向下传递 AUTO 由各引擎单句精准自适应）
+                    startBatchTranslation(blocks, currentSrc, effTarget)
                 },
                 onError = { errorMsg ->
                     _uiState.update {
@@ -215,6 +218,7 @@ class ImageTranslateViewModel : ViewModel() {
      */
     fun setTargetLanguage(newTarget: Language) {
         if (_uiState.value.targetLanguage == newTarget) return
+        isTargetManuallyModified = true
         _uiState.update { it.copy(targetLanguage = newTarget) }
         retranslateCurrentBlocks()
     }
@@ -224,7 +228,17 @@ class ImageTranslateViewModel : ViewModel() {
      */
     fun setSourceLanguage(newSource: Language) {
         if (_uiState.value.sourceLanguage == newSource) return
-        _uiState.update { it.copy(sourceLanguage = newSource) }
+        var newTarget = _uiState.value.targetLanguage
+        // 若手动选择的源语言与当前目标语言冲突，智能对调目标语言
+        if (newSource != Language.AUTO && newSource == newTarget) {
+            newTarget = if (newSource == Language.ZH) Language.EN else Language.ZH
+        }
+        _uiState.update {
+            it.copy(
+                sourceLanguage = newSource,
+                targetLanguage = newTarget
+            )
+        }
         retranslateCurrentBlocks()
     }
 
@@ -237,11 +251,12 @@ class ImageTranslateViewModel : ViewModel() {
 
         val newSource = currentTarget
         val newTarget = if (currentSource == Language.AUTO) {
-            Language.ZH
+            if (currentTarget == Language.ZH) Language.EN else Language.ZH
         } else {
             currentSource
         }
 
+        isTargetManuallyModified = true
         _uiState.update {
             it.copy(
                 sourceLanguage = newSource,

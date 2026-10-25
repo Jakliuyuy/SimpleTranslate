@@ -133,17 +133,99 @@ data class Language(
         }
 
         /**
-         * 判定文本中是否包含汉字 (覆盖 CJK 统一表意文字基本区、扩展区及增补汉字)
+         * 判定字符是否为汉字 CodePoint (覆盖 CJK 统一表意文字基本区、扩展区及增补汉字)
+         */
+        fun isHanCodePoint(codePoint: Int): Boolean {
+            return codePoint in 0x4E00..0x9FFF ||
+                   codePoint in 0x3400..0x4DBF ||
+                   codePoint in 0x20000..0x2CEAF ||
+                   (try { Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN } catch (_: Exception) { false })
+        }
+
+        /**
+         * 判定字符是否为拉丁字母 (覆盖标准英文字母 A-Z, a-z 及法、德、西等扩展拉丁字母)
+         */
+        fun isLatinCodePoint(codePoint: Int): Boolean {
+            return (codePoint in 0x0041..0x005A) ||
+                   (codePoint in 0x0061..0x007A) ||
+                   (codePoint in 0x00C0..0x024F) ||
+                   (try { Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN } catch (_: Exception) { false })
+        }
+
+        /**
+         * 语种核心字符频次统计数据模型
+         */
+        data class LanguageCharStats(
+            val chineseCount: Int = 0,
+            val latinCount: Int = 0,
+            val kanaCount: Int = 0,
+            val hangulCount: Int = 0,
+            val cyrillicCount: Int = 0,
+            val arabicCount: Int = 0,
+            val thaiCount: Int = 0,
+            val otherLetterCount: Int = 0
+        ) {
+            val totalLetterOrCharCount: Int
+                get() = chineseCount + latinCount + kanaCount + hangulCount + cyrillicCount + arabicCount + thaiCount + otherLetterCount
+        }
+
+        /**
+         * 统计文本中各语种核心字符的频次分布
+         */
+        fun analyzeCharStats(text: String): LanguageCharStats {
+            var chinese = 0
+            var latin = 0
+            var kana = 0
+            var hangul = 0
+            var cyrillic = 0
+            var arabic = 0
+            var thai = 0
+            var other = 0
+
+            var i = 0
+            while (i < text.length) {
+                val cp = text.codePointAt(i)
+                when {
+                    // 1. 日文假名 (平假名 & 片假名 & 假名扩展)
+                    cp in 0x3040..0x309F || cp in 0x30A0..0x30FF || cp in 0x31F0..0x31FF -> kana++
+                    // 2. 韩文 (Hangul)
+                    cp in 0xAC00..0xD7AF || cp in 0x1100..0x11FF || cp in 0x3130..0x318F -> hangul++
+                    // 3. 中文汉字
+                    isHanCodePoint(cp) -> chinese++
+                    // 4. 西里尔字母 (俄文)
+                    cp in 0x0400..0x04FF -> cyrillic++
+                    // 5. 阿拉伯文
+                    cp in 0x0600..0x06FF -> arabic++
+                    // 6. 泰文
+                    cp in 0x0E00..0x0E7F -> thai++
+                    // 7. 拉丁字母 (英文及拉丁语系)
+                    isLatinCodePoint(cp) -> latin++
+                    // 8. 其他字母 (如希腊字母等)
+                    Character.isLetter(cp) -> other++
+                }
+                i += Character.charCount(cp)
+            }
+
+            return LanguageCharStats(
+                chineseCount = chinese,
+                latinCount = latin,
+                kanaCount = kana,
+                hangulCount = hangul,
+                cyrillicCount = cyrillic,
+                arabicCount = arabic,
+                thaiCount = thai,
+                otherLetterCount = other
+            )
+        }
+
+        /**
+         * 判定文本中是否包含汉字
          */
         fun containsChinese(text: String): Boolean {
             var i = 0
             while (i < text.length) {
                 val codePoint = text.codePointAt(i)
-                if (codePoint in 0x4E00..0x9FFF ||
-                    codePoint in 0x3400..0x4DBF ||
-                    codePoint in 0x20000..0x2CEAF ||
-                    (try { Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN } catch (_: Exception) { false })
-                ) {
+                if (isHanCodePoint(codePoint)) {
                     return true
                 }
                 i += Character.charCount(codePoint)
@@ -152,45 +234,66 @@ data class Language(
         }
 
         /**
-         * 根据文本特征推断其实际所属语种（支持中、英、日、韩、俄、阿、泰等），用于 AUTO 模式下的发音与语言解析
+         * 主体字符频次与权重占比算法（Dominant Language Detection）
+         * 彻底告别单字符命中导致的二值误判，精准识别文本/图片的核心主导语种。
          */
         fun detectLanguage(text: String): Language {
             val clean = text.trim()
             if (clean.isEmpty()) return EN
 
-            // 1. 日文平假名与片假名优先判定（日文中常包含汉字，若包含假名则必然为日文）
-            if (clean.any { it.code in 0x3040..0x30FF || it.code in 0x31F0..0x31FF }) {
+            val stats = analyzeCharStats(clean)
+            if (stats.totalLetterOrCharCount == 0) return EN
+
+            // 1. 日文假名判定：
+            // 日语中平假名与片假名为日文独有（中文绝对不含假名）。
+            // 当假名存在且占汉字与假名总数的 15% 以上，或假名数 >= 3，或纯假名时，精准判定为日文
+            val totalCJK = stats.kanaCount + stats.chineseCount
+            val kanaRatio = if (totalCJK > 0) stats.kanaCount.toFloat() / totalCJK else 0f
+            if (stats.kanaCount > 0 && (kanaRatio >= 0.15f || stats.kanaCount >= 3 || stats.chineseCount == 0)) {
                 return JA
             }
 
-            // 2. 韩文
-            if (clean.any { it.code in 0xAC00..0xD7AF || it.code in 0x1100..0x11FF || it.code in 0x3130..0x318F }) {
+            // 2. 韩文 (Hangul) 判定：
+            // 韩文谚文为韩语特有。当存在韩文且未被海量汉字稀释时判定为韩文
+            val totalHangulCJK = stats.hangulCount + stats.chineseCount
+            val hangulRatio = if (totalHangulCJK > 0) stats.hangulCount.toFloat() / totalHangulCJK else 0f
+            if (stats.hangulCount > 0 && (hangulRatio >= 0.15f || stats.hangulCount >= 3 || stats.chineseCount == 0)) {
                 return KO
             }
 
-            // 3. 中文汉字
-            if (containsChinese(clean)) {
-                return ZH
-            }
-
-            // 4. 泰文
-            if (clean.any { it.code in 0x0E00..0x0E7F }) {
-                return TH
-            }
-
-            // 5. 阿拉伯文
-            if (clean.any { it.code in 0x0600..0x06FF }) {
-                return AR
-            }
-
-            // 6. 俄文 (西里尔字母)
-            if (clean.any { it.code in 0x0400..0x04FF }) {
+            // 3. 俄文 (西里尔字母)
+            if (stats.cyrillicCount > 0 && stats.cyrillicCount >= stats.latinCount && stats.cyrillicCount >= stats.chineseCount) {
                 return RU
             }
 
-            // 7. 拉丁字母/法文/德文/西班牙语等外语，默认归属英文体系朗读
-            val hasLatin = clean.any { Character.isLetter(it) }
-            if (hasLatin) {
+            // 4. 阿拉伯文
+            if (stats.arabicCount > 0 && stats.arabicCount >= stats.latinCount && stats.arabicCount >= stats.chineseCount) {
+                return AR
+            }
+
+            // 5. 泰文
+            if (stats.thaiCount > 0 && stats.thaiCount >= stats.latinCount && stats.thaiCount >= stats.chineseCount) {
+                return TH
+            }
+
+            // 6. 中文与英文/拉丁语系主体比较 (Dominant Language Detection)
+            // 汉字表意词素加权系数为 2.8，英文字母加权系数为 1.0
+            val weightedChinese = stats.chineseCount * 2.8f
+            val weightedLatin = stats.latinCount * 1.0f
+
+            if (weightedChinese > weightedLatin) {
+                return ZH
+            }
+
+            if (stats.latinCount > 0) {
+                return EN
+            }
+
+            if (stats.chineseCount > 0) {
+                return ZH
+            }
+
+            if (stats.otherLetterCount > 0) {
                 return EN
             }
 
@@ -198,22 +301,32 @@ data class Language(
         }
 
         /**
-         * 根据输入文本特征，为自动检测 (AUTO) 模式推导合适的目标语言：
-         * 1. 包含汉字 -> 输入为中文，目标语言动态对齐为英文 (Language.EN)
-         * 2. 不含汉字且包含字母/外语字符 -> 输入为英文或其他语种，目标语言动态对齐为中文 (Language.ZH)
-         * 3. 纯空白、数字或符号 -> 保持当前目标语言
+         * 根据主体语言判定结果为自动检测 (AUTO) 模式推导合适的目标语言：
+         * 1. 中文主体 (chineseCount > latinCount 加权占优) -> 目标语言对齐为英文 (Language.EN)，中译英
+         * 2. 英文主体 (latinCount >= chineseCount 加权占优) -> 目标语言对齐为中文 (Language.ZH)，英译中
+         * 3. 日文、韩文、俄文、泰文、阿拉伯文等其他外语 -> 目标语言对齐为中文 (Language.ZH)
+         * 4. 纯空白、纯数字或纯符号 -> 保持当前目标语言
          */
         fun autoDetectTargetLanguage(text: String, currentTarget: Language = ZH): Language {
             val clean = text.trim()
             if (clean.isEmpty()) return currentTarget
-            if (containsChinese(clean)) {
-                return EN
+
+            val stats = analyzeCharStats(clean)
+            if (stats.totalLetterOrCharCount == 0) {
+                return if (currentTarget == AUTO) ZH else currentTarget
             }
-            val hasLetterOrForeign = clean.any { Character.isLetter(it) }
-            if (hasLetterOrForeign) {
-                return ZH
+
+            val dominant = detectLanguage(clean)
+            return when (dominant) {
+                ZH -> EN
+                EN -> ZH
+                JA -> ZH
+                KO -> ZH
+                RU -> ZH
+                AR -> ZH
+                TH -> ZH
+                else -> ZH
             }
-            return if (currentTarget == AUTO) ZH else currentTarget
         }
     }
 }

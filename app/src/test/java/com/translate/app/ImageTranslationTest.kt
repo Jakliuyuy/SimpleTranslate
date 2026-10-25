@@ -314,18 +314,85 @@ class ImageTranslationTest {
         var targetLang = Language.ZH
 
         var newSource = targetLang
-        var newTarget = if (sourceLang == Language.AUTO) Language.ZH else sourceLang
+        var newTarget = if (sourceLang == Language.AUTO) {
+            if (targetLang == Language.ZH) Language.EN else Language.ZH
+        } else {
+            sourceLang
+        }
         assertEquals(Language.ZH, newSource)
         assertEquals(Language.EN, newTarget)
 
-        // 场景 2: AUTO 语言互换 (AUTO -> JA 互换为 JA -> ZH)
+        // 场景 2: AUTO -> ZH 互换为 ZH -> EN (彻底避免同为中文)
+        sourceLang = Language.AUTO
+        targetLang = Language.ZH
+        newSource = targetLang
+        newTarget = if (sourceLang == Language.AUTO) {
+            if (targetLang == Language.ZH) Language.EN else Language.ZH
+        } else {
+            sourceLang
+        }
+        assertEquals(Language.ZH, newSource)
+        assertEquals(Language.EN, newTarget)
+
+        // 场景 3: AUTO -> JA 互换为 JA -> ZH
         sourceLang = Language.AUTO
         targetLang = Language.JA
-
         newSource = targetLang
-        newTarget = if (sourceLang == Language.AUTO) Language.ZH else sourceLang
+        newTarget = if (sourceLang == Language.AUTO) {
+            if (targetLang == Language.ZH) Language.EN else Language.ZH
+        } else {
+            sourceLang
+        }
         assertEquals(Language.JA, newSource)
         assertEquals(Language.ZH, newTarget)
+    }
+
+    @Test
+    fun testImageBlocksDominantLanguageInference() {
+        // 模拟 OCR 识别出的多个文本块：
+        // 包含 4 个大段英文块，以及 1 个顶部状态栏中文块（中国移动 9:41）
+        val statusBlock = TranslatedBlock(
+            id = "0",
+            originalText = "中国移动 9:41 上午",
+            box = com.translate.app.data.model.OverlayRect(10, 10, 200, 30)
+        )
+        val contentBlock1 = TranslatedBlock(
+            id = "1",
+            originalText = "Welcome to the Application Settings and Preferences.",
+            box = com.translate.app.data.model.OverlayRect(20, 50, 400, 100)
+        )
+        val contentBlock2 = TranslatedBlock(
+            id = "2",
+            originalText = "You can easily configure server endpoints, proxy settings, and encryption options here.",
+            box = com.translate.app.data.model.OverlayRect(20, 110, 400, 160)
+        )
+        val contentBlock3 = TranslatedBlock(
+            id = "3",
+            originalText = "All operations are strictly confidential and encrypted with standard algorithms.",
+            box = com.translate.app.data.model.OverlayRect(20, 170, 400, 220)
+        )
+
+        val blocks = listOf(statusBlock, contentBlock1, contentBlock2, contentBlock3)
+        val combinedText = blocks.joinToString("\n") { it.originalText }
+
+        // 验证整图主体语言为英文
+        val dominantLang = Language.detectLanguage(combinedText)
+        assertEquals(Language.EN, dominantLang)
+
+        // 验证目标语言自动对齐为中文 (Language.ZH)，执行英译中
+        val targetLang = Language.autoDetectTargetLanguage(combinedText, Language.ZH)
+        assertEquals(Language.ZH, targetLang)
+
+        // 验证源语言在 AUTO 模式下保持为 AUTO，目标语言根据主体文字自动对齐
+        val initialSource = Language.AUTO
+        var effectiveSource = initialSource
+        var effectiveTarget = Language.ZH
+
+        if (effectiveSource == Language.AUTO) {
+            effectiveTarget = Language.autoDetectTargetLanguage(combinedText, effectiveTarget)
+        }
+        assertEquals(Language.AUTO, effectiveSource) // 保持 AUTO！
+        assertEquals(Language.ZH, effectiveTarget)   // 自动联动为中文！
     }
 
     @Test

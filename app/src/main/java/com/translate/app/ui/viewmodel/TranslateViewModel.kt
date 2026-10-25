@@ -164,15 +164,12 @@ class TranslateViewModel : ViewModel() {
     private suspend fun performTranslate(text: String) {
         _isLoading.value = true
 
-        // 防冲突安全校验：若源语言为 AUTO，彻底避免中译中或英译英尴尬情况
+        // 防冲突安全校验：若源语言为 AUTO，基于主体语言推导目标语言，彻底避免二值误判导致中译中或英译英
         if (_sourceLanguage.value == Language.AUTO) {
-            val isChinese = Language.containsChinese(text)
-            if (isChinese && _targetLanguage.value == Language.ZH) {
-                _targetLanguage.value = Language.EN
-                prefRepo.lastTargetLang = Language.EN.code
-            } else if (!isChinese && text.any { Character.isLetter(it) } && _targetLanguage.value == Language.EN) {
-                _targetLanguage.value = Language.ZH
-                prefRepo.lastTargetLang = Language.ZH.code
+            val desiredTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
+            if (_targetLanguage.value != desiredTarget) {
+                _targetLanguage.value = desiredTarget
+                prefRepo.lastTargetLang = desiredTarget.code
             }
         }
 

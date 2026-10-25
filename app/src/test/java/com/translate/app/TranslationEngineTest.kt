@@ -448,5 +448,88 @@ class TranslationEngineTest {
         assertEquals(Language.RU, resolveSpeakLang("Привет мир", Language.AUTO))
         assertEquals(Language.AR, resolveSpeakLang("مرحبا", Language.AUTO))
     }
+
+    @Test
+    fun testDominantLanguageDetection_MixedEnglishDominant() {
+        // 典型痛点场景 1：手机屏幕截图为大量英文（如英语新闻/设置），顶部状态栏包含中文（如时间汉字或运营商“中国移动”）
+        val englishScreenshotText = """
+            中国移动 9:41 上午
+            Settings - Wi-Fi and Network
+            Connected to office_5g_enterprise
+            Tap here to configure IP address, DNS servers, and security certificates.
+            Advanced settings allow proxy configuration and metered network controls.
+        """.trimIndent()
+
+        // 必须识别为主体语言为英文 (Language.EN)
+        assertEquals(Language.EN, Language.detectLanguage(englishScreenshotText))
+        // 目标语言必须自动对齐为中文 (Language.ZH)，执行【英译中】！绝不能被误判为中译英！
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(englishScreenshotText, Language.ZH))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(englishScreenshotText, Language.EN))
+
+        // 更多英文占优场景（英文论文摘要附带中文作者名）
+        val academicAbstract = "Deep learning architectures have revolutionized automated translation systems. 作者：张伟, 李强"
+        assertEquals(Language.EN, Language.detectLanguage(academicAbstract))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(academicAbstract))
+    }
+
+    @Test
+    fun testDominantLanguageDetection_MixedChineseDominant() {
+        // 典型场景 2：中文主体截图中含有少量英文品牌词、缩写或专业术语
+        val chineseArticleWithEnglishTerms = """
+            SimpleTranslate 是一款面向 Android 平台开发的极简翻译工具。
+            它支持 Google、Baidu、Tencent 等多种主流翻译引擎，具备毫秒级响应速度。
+            在 OCR 图片识别功能上，通过 ML Kit 实现了高精度的实景原位排版与贴字渲染。
+        """.trimIndent()
+
+        // 必须判定为主体语言为中文 (Language.ZH)
+        assertEquals(Language.ZH, Language.detectLanguage(chineseArticleWithEnglishTerms))
+        // 目标语言必须自动对齐为英文 (Language.EN)，执行【中译英】！
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage(chineseArticleWithEnglishTerms, Language.ZH))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage(chineseArticleWithEnglishTerms, Language.EN))
+    }
+
+    @Test
+    fun testDominantLanguageDetection_PureEnglishAndPureChinese() {
+        // 纯英文
+        val pureEn = "Welcome to the real-time in-place image translation experience."
+        assertEquals(Language.EN, Language.detectLanguage(pureEn))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(pureEn))
+
+        // 纯中文
+        val pureZh = "海内存知己，天涯若比邻。无为在歧路，儿女共沾巾。"
+        assertEquals(Language.ZH, Language.detectLanguage(pureZh))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage(pureZh))
+    }
+
+    @Test
+    fun testDominantLanguageDetection_JapaneseAndKorean() {
+        // 日文假名占优（混排日文汉字）
+        val japaneseMixed = "東京タワーに行きます。入場券を購入してください。"
+        assertEquals(Language.JA, Language.detectLanguage(japaneseMixed))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(japaneseMixed))
+
+        // 纯日文假名
+        val japaneseKanaOnly = "ありがとうございます。どうぞよろしくおねがいします。"
+        assertEquals(Language.JA, Language.detectLanguage(japaneseKanaOnly))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(japaneseKanaOnly))
+
+        // 韩文谚文
+        val koreanText = "안녕하세요! 번역 애플리케이션을 이용해 주셔서 감사합니다."
+        assertEquals(Language.KO, Language.detectLanguage(koreanText))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(koreanText))
+    }
+
+    @Test
+    fun testDominantLanguageDetection_CharStats() {
+        val mixedText = "Hello 123 世界！"
+        val stats = Language.analyzeCharStats(mixedText)
+        assertEquals(2, stats.chineseCount) // "世", "界"
+        assertEquals(5, stats.latinCount)   // "Hello"
+        assertEquals(0, stats.kanaCount)
+        assertEquals(0, stats.hangulCount)
+
+        // 5 * 1.0 = 5.0, 2 * 2.8 = 5.6 -> 5.6 > 5.0，中文占优
+        assertEquals(Language.ZH, Language.detectLanguage(mixedText))
+    }
 }
 

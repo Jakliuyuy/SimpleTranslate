@@ -38,8 +38,8 @@ jobs:
       - name: Organize APK Artifacts
         run: |
           mkdir -p build/artifacts
-          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.3.2-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.3.2-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.3.3-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.3.3-debug.apk
           ls -lh build/artifacts/
 
       - name: Upload APK Artifacts
@@ -52,25 +52,31 @@ jobs:
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.3.2
-          name: "SimpleTranslate v1.3.2 (Super Slim Release: arm64-v8a ABI Filter & R8/Resource Shrink 54MB -> 16MB)"
+          tag_name: v1.3.3
+          name: "SimpleTranslate v1.3.3 (Dominant Language Detection & Smart AUTO Mode Alignment)"
           body: |
-            ## 🚀 SimpleTranslate 极简谷歌翻译 Android APP v1.3.2 极致瘦身版 (54MB ➡️ 16MB)
+            ## 🚀 SimpleTranslate 极简谷歌翻译 Android APP v1.3.3 重磅更新
 
-            ### ⚡ 核心瘦身成果与技术优化
-            - 📉 **体积暴降 70%**：Release APK 体积由原本臃肿的 **54MB** 大幅骤降至 **16MB**，秒速下载与安装！
-            - 🎯 **现代架构精准适配 (arm64-v8a ABI Filter)**：
-              - 剔除冗余的历史 32 位与模拟器架构（x86, x86_64, armeabi-v7a），仅保留现代 Android 真机标准 64 位核心动态库；
-              - 单项去除多余 ML Kit OCR 动态库占用达 30MB+。
-            - 🛡️ **全面启用 R8 混淆优化与无用资源缩减 (isMinifyEnabled & isShrinkResources)**：
-              - 启用 R8 死代码剥离与无用资源裁剪，classes.dex 体积由 45MB 优化至仅 5.7MB；
-              - 针对 ML Kit OCR、OkHttp3、Gson、Coroutines、Jetpack Compose 等关键底层框架严密配置 Proguard 保留规则，保证极致体积的同时具备 100% 运行时稳定性与业务可用性。
+            ### ⚡ 核心修复与技术升级
+            - 🎯 **彻底根除字符二值命中误判（Dominant Language Detection）**：
+              - 废弃原本出现 1 个汉字（如状态栏时间、微量 UI 汉字）即误判“整图/全文为中文”的脆弱二值匹配缺陷；
+              - 全新构建**【主体字符频次与权重占比算法】**，科学加权统计中文汉字、英文字母、日文假名、韩文、俄文、泰文、阿拉伯文等字符分布：
+                - **英文主体（如大量英文+少许中文状态栏）**：精准判定为英文，目标语言自动对齐为 **【中文 (Language.ZH)】**，执行**英译中**！
+                - **中文主体（如大量中文+少许英文术语）**：精准判定为中文，目标语言自动对齐为 **【英文 (Language.EN)】**，执行**中译英**！
+                - **日文假名/韩文/俄文/泰文/外语**：精准判定对应语种，目标语言自动对齐为 **【中文 (Language.ZH)】**！
+            - 🛡️ **UI 严格保持 AUTO 模式与手动选择保护**：
+              - 源语言选择器原生保持【自动检测 (Language.AUTO)】状态，不再粗暴写死抹杀 AUTO 模式；
+              - 目标语言根据识别出的主体语言自动联动切换；
+              - 用户在右侧手动指定的自定义目标语言（如日语、法语）将受到完整保护，不被识别结果强制覆盖；
+              - 顶部支持一键互换双向箭头（Swap），彻底避免 AUTO 模式下互换出现中译中或英译英异常；
+            - 🌐 **单块并发翻译自适应传递**：
+              - 在并发原位翻译图片各文本块时，当源语言为 AUTO 时直接向翻译引擎传递 `Language.AUTO`，由底层引擎对每一个文本块进行高精度单句级二次自适应识别，彻底杜绝全局误判导致的局部翻错。
 
             ### 📦 安装包下载直链
-            - [SimpleTranslate-v1.3.2-release.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.2/SimpleTranslate-v1.3.2-release.apk) (正式发布版 - 极致瘦身 16MB)
-            - [SimpleTranslate-v1.3.2-debug.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.2/SimpleTranslate-v1.3.2-debug.apk) (调试版)
+            - [SimpleTranslate-v1.3.3-release.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.3/SimpleTranslate-v1.3.3-release.apk) (正式发布版 - 极致瘦身 16MB)
+            - [SimpleTranslate-v1.3.3-debug.apk](https://github.com/Jakliuyuy/SimpleTranslate/releases/download/v1.3.3/SimpleTranslate-v1.3.3-debug.apk) (调试版)
           files: |
-            build/artifacts/SimpleTranslate-v1.3.2-release.apk
-            build/artifacts/SimpleTranslate-v1.3.2-debug.apk
+            build/artifacts/SimpleTranslate-v1.3.3-release.apk
+            build/artifacts/SimpleTranslate-v1.3.3-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
