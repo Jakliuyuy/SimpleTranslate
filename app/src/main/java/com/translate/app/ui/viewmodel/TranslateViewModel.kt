@@ -1,0 +1,264 @@
+package com.translate.app.ui.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.translate.app.SimpleTranslateApp
+import com.translate.app.data.db.TranslationRecord
+import com.translate.app.data.model.Language
+import com.translate.app.data.model.TranslationEngineType
+import com.translate.app.data.model.TranslationResult
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+class TranslateViewModel : ViewModel() {
+
+    private val repository = SimpleTranslateApp.instance.translationRepository
+    private val prefRepo = SimpleTranslateApp.instance.preferenceRepository
+    private val ttsManager = SimpleTranslateApp.instance.ttsManager
+
+    // 输入与翻译状态
+    private val _inputText = MutableStateFlow("")
+    val inputText: StateFlow<String> = _inputText.asStateFlow()
+
+    private val _translationResult = MutableStateFlow<TranslationResult?>(null)
+    val translationResult: StateFlow<TranslationResult?> = _translationResult.asStateFlow()
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    // 语种状态
+    private val _sourceLanguage = MutableStateFlow(Language.fromCode(prefRepo.lastSourceLang))
+    val sourceLanguage: StateFlow<Language> = _sourceLanguage.asStateFlow()
+
+    private val _targetLanguage = MutableStateFlow(
+        if (prefRepo.lastTargetLang == Language.AUTO.code) Language.EN
+        else Language.fromCode(prefRepo.lastTargetLang)
+    )
+    val targetLanguage: StateFlow<Language> = _targetLanguage.asStateFlow()
+
+    // 历史与收藏
+    private val _historyList = MutableStateFlow<List<TranslationRecord>>(emptyList())
+    val historyList: StateFlow<List<TranslationRecord>> = _historyList.asStateFlow()
+
+    private val _favoritesList = MutableStateFlow<List<TranslationRecord>>(emptyList())
+    val favoritesList: StateFlow<List<TranslationRecord>> = _favoritesList.asStateFlow()
+
+    // 引擎设置与测试
+    private val _selectedEngine = MutableStateFlow(prefRepo.selectedEngineType)
+    val selectedEngine: StateFlow<TranslationEngineType> = _selectedEngine.asStateFlow()
+
+    private val _testResult = MutableStateFlow<Pair<Boolean, String>?>(null)
+    val testResult: StateFlow<Pair<Boolean, String>?> = _testResult.asStateFlow()
+
+    // 全屏展示弹窗
+    private val _fullscreenText = MutableStateFlow<String?>(null)
+    val fullscreenText: StateFlow<String?> = _fullscreenText.asStateFlow()
+
+    // TTS 状态
+    val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
+
+    private var debounceJob: Job? = null
+
+    init {
+        loadHistory()
+        loadFavorites()
+    }
+
+    fun onInputTextChanged(newText: String) {
+        _inputText.value = newText
+        debounceJob?.cancel()
+
+        if (newText.trim().isEmpty()) {
+            _translationResult.value = null
+            _isLoading.value = false
+            return
+        }
+
+        debounceJob = viewModelScope.launch {
+            delay(500) // 防抖 500ms
+            performTranslate(newText)
+        }
+    }
+
+    fun setSourceLanguage(lang: Language) {
+        _sourceLanguage.value = lang
+        prefRepo.lastSourceLang = lang.code
+        triggerImmediateTranslate()
+    }
+
+    fun setTargetLanguage(lang: Language) {
+        _targetLanguage.value = lang
+        prefRepo.lastTargetLang = lang.code
+        triggerImmediateTranslate()
+    }
+
+    fun swapLanguages() {
+        val currentSrc = _sourceLanguage.value
+        val currentTgt = _targetLanguage.value
+
+        // 如果源语言是自动检测，交换时转为当前译文语言或目标语言
+        val newSrc = if (currentSrc == Language.AUTO) currentTgt else currentTgt
+        val newTgt = if (currentSrc == Language.AUTO) Language.ZH else currentSrc
+
+        _sourceLanguage.value = newSrc
+        _targetLanguage.value = newTgt
+        prefRepo.lastSourceLang = newSrc.code
+        prefRepo.lastTargetLang = newTgt.code
+
+        // 如果已有译文，将译文作为新的输入
+        val currentResult = _translationResult.value
+        if (currentResult != null && currentResult.translatedText.isNotBlank()) {
+            _inputText.value = currentResult.translatedText
+            triggerImmediateTranslate()
+        }
+    }
+
+    fun triggerImmediateTranslate() {
+        debounceJob?.cancel()
+        val text = _inputText.value.trim()
+        if (text.isEmpty()) return
+        viewModelScope.launch {
+            performTranslate(text)
+        }
+    }
+
+    private suspend fun performTranslate(text: String) {
+        _isLoading.value = true
+        val result = repository.translate(
+            text = text,
+            from = _sourceLanguage.value,
+            to = _targetLanguage.value
+        )
+        _translationResult.value = result
+        _isLoading.value = false
+        loadHistory()
+    }
+
+    fun clearInput() {
+        _inputText.value = ""
+        _translationResult.value = null
+        debounceJob?.cancel()
+    }
+
+    fun speak(text: String, language: Language, onError: ((String) -> Unit)? = null) {
+        ttsManager.speak(text, language, onError)
+    }
+
+    fun stopSpeaking() {
+        ttsManager.stop()
+    }
+
+    fun toggleFavorite(record: TranslationRecord) {
+        viewModelScope.launch {
+            repository.toggleFavorite(record.id, !record.isFavorite)
+            loadHistory()
+            loadFavorites()
+        }
+    }
+
+    fun toggleCurrentResultFavorite() {
+        val res = _translationResult.value ?: return
+        if (res.translatedText.isBlank()) return
+
+        viewModelScope.launch {
+            val records = repository.getHistory(res.originalText)
+            val matched = records.firstOrNull { it.sourceText == res.originalText }
+            if (matched != null) {
+                repository.toggleFavorite(matched.id, !matched.isFavorite)
+            }
+            loadHistory()
+            loadFavorites()
+        }
+    }
+
+    fun deleteHistory(id: Long) {
+        viewModelScope.launch {
+            repository.deleteRecord(id)
+            loadHistory()
+            loadFavorites()
+        }
+    }
+
+    fun clearHistory(keepFavorites: Boolean = true) {
+        viewModelScope.launch {
+            repository.clearHistory(keepFavorites)
+            loadHistory()
+            loadFavorites()
+        }
+    }
+
+    fun loadHistory(keyword: String = "") {
+        viewModelScope.launch {
+            _historyList.value = repository.getHistory(keyword)
+        }
+    }
+
+    fun loadFavorites(keyword: String = "") {
+        viewModelScope.launch {
+            _favoritesList.value = repository.getFavorites(keyword)
+        }
+    }
+
+    fun selectHistoryItem(item: TranslationRecord) {
+        _inputText.value = item.sourceText
+        _sourceLanguage.value = Language.fromCode(item.sourceLang)
+        _targetLanguage.value = Language.fromCode(item.targetLang)
+        _translationResult.value = TranslationResult(
+            originalText = item.sourceText,
+            translatedText = item.translatedText,
+            sourceLanguage = Language.fromCode(item.sourceLang),
+            targetLanguage = Language.fromCode(item.targetLang),
+            engineType = TranslationEngineType.fromId(item.engineType),
+            isSuccess = true
+        )
+    }
+
+    // 引擎管理与密钥保存
+    fun setEngineType(type: TranslationEngineType) {
+        _selectedEngine.value = type
+        prefRepo.selectedEngineType = type
+        _testResult.value = null
+        triggerImmediateTranslate()
+    }
+
+    fun saveBaiduConfig(appId: String, secretKey: String) {
+        prefRepo.baiduAppId = appId
+        prefRepo.baiduSecretKey = secretKey
+    }
+
+    fun saveYoudaoConfig(appKey: String, appSecret: String) {
+        prefRepo.youdaoAppKey = appKey
+        prefRepo.youdaoAppSecret = appSecret
+    }
+
+    fun saveTencentConfig(secretId: String, secretKey: String) {
+        prefRepo.tencentSecretId = secretId
+        prefRepo.tencentSecretKey = secretKey
+    }
+
+    fun testConnection() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            val res = repository.testCurrentEngine()
+            _testResult.value = res
+            _isLoading.value = false
+        }
+    }
+
+    fun showFullscreen(text: String) {
+        _fullscreenText.value = text
+    }
+
+    fun dismissFullscreen() {
+        _fullscreenText.value = null
+    }
+
+    override fun onCleared() {
+        ttsManager.stop()
+        super.onCleared()
+    }
+}

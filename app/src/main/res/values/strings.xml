@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">极简翻译</string>
+    <string name="tab_translate">翻译</string>
+    <string name="tab_conversation">对话</string>
+    <string name="tab_favorites">收藏</string>
+    <string name="tab_history">历史</string>
+    <string name="tab_settings">设置</string>
+    
+    <string name="input_hint">输入文字或粘贴内容…</string>
+    <string name="auto_detect">自动检测语言</string>
+    <string name="translate_action">翻译</string>
+    <string name="copied_to_clipboard">已复制到剪贴板</string>
+    <string name="history_cleared">已清空历史记录</string>
+    <string name="api_saved">API 配置已保存</string>
+    <string name="connection_success">API 连接测试成功！</string>
+    <string name="connection_failed">API 连接失败，请检查配置</string>
+</resources>

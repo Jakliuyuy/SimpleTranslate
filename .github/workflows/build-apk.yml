@@ -1,0 +1,72 @@
+name: Build and Release APK
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Build Release & Debug APK
+        run: ./gradlew assembleRelease assembleDebug --no-daemon
+
+      - name: Organize APK Artifacts
+        run: |
+          mkdir -p build/artifacts
+          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.0.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.0.0-debug.apk
+          ls -lh build/artifacts/
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleTranslate-APKs
+          path: build/artifacts/*.apk
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: "SimpleTranslate v1.0.0 (Baidu API Key Integrated)"
+          body: |
+            ## 🎉 SimpleTranslate 极简谷歌翻译 Android APP 发布
+
+            ### 🚀 核心特性与更新
+            - **百度 API Key 深度对接**：已预置并对接百度翻译 API Key (`wMHD_dber75qj3nn4okmvvqb0`)，支持大模型文本翻译 (AI Text Translate) 与经典通用翻译 (VIP) 双模智能容错切换。
+            - **仿谷歌翻译极简体验**：优雅沉浸式 Material 3 UI，双语即时翻译、历史与收藏夹、全屏放大展示。
+            - **多引擎无缝切换**：支持百度翻译、网易有道、腾讯云及本地 Mock 演示引擎，支持在【设置】中动态更新密钥。
+
+            ### 📦 安装包下载
+            - [SimpleTranslate-v1.0.0-release.apk](SimpleTranslate-v1.0.0-release.apk) (正式发布版)
+            - [SimpleTranslate-v1.0.0-debug.apk](SimpleTranslate-v1.0.0-debug.apk) (调试版)
+          files: |
+            build/artifacts/SimpleTranslate-v1.0.0-release.apk
+            build/artifacts/SimpleTranslate-v1.0.0-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
