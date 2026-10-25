@@ -38,8 +38,8 @@ jobs:
       - name: Organize APK Artifacts
         run: |
           mkdir -p build/artifacts
-          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.2.0-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.2.0-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.3.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.3.0-debug.apk
           ls -lh build/artifacts/
 
       - name: Upload APK Artifacts
@@ -52,31 +52,34 @@ jobs:
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.2.0
-          name: "SimpleTranslate v1.2.0 (Dual-Mode TTS & Smart Bidirectional Auto Translation)"
+          tag_name: v1.3.0
+          name: "SimpleTranslate v1.3.0 (Google-Grade In-Place AR Image Translation & Fullscreen Overlay Viewer)"
           body: |
-            ## 🎉 SimpleTranslate 极简谷歌翻译 Android APP v1.2.0 重磅发布
+            ## 🎉 SimpleTranslate 极简谷歌翻译 Android APP v1.3.0 重磅发布
 
             ### 🚀 核心新特性与全面升级
-            - 🔊 **语音朗读重大升级：本地 TTS + 在线网络发音音频双模兜底（Fallback）**：
-              - 彻底解决小米澎湃OS、华为、OPPO、vivo 等绝大多数国产安卓真机因未预装 Google TTS 引擎或缺少离线语音包导致点击喇叭无声的痛点！
-              - 本地 TTS 不可用或缺语言包时，立即自动平滑无缝切换到免 Key 高保真在线网络音频流发音（有道发音 + 美国中转代理 TTS + Google TTS 免 Key 接口）。
-              - 规范使用 `STREAM_MUSIC` 媒体音频流，并在手机媒体音量为 0 或静音模式时提供友好提示。
-              - 在 `AndroidManifest.xml` 中声明 `TTS_SERVICE` 查询意图，全面适配 Android 11+ 包可见性机制。
-            - 🔄 **自动检测模式下的智能中英互译双向对调**：
-              - 当源语言为【自动检测 (AUTO)】时，随用户输入或粘贴实时智能识别语种特征：
-                - 输入中文 -> 自动将目标语言动态对齐切换为英文 (`Language.EN`)，执行中译英；
-                - 输入英文及其他语种 -> 自动将目标语言动态对齐切换为中文 (`Language.ZH`)，执行英译中；
-              - 界面目标语言动态同步联动，支持用户随时手动切换，彻底根除“中译中”尴尬情况。
-            - 🌐 **内置 Google 翻译引擎与轻量中转代理服务端**：
-              - 内置免 Key 官方直连与美国专用中转代理服务器双模支持。
-              - 中转代理服务端新增 `/api/tts` 高保真语音流代理端点。
+            - 🖼️ **原位实景图片翻译 (Google-Grade In-Place AR Image Translation Overlay)**：
+              - 彻底告别以往仅将 OCR 识别文字提取填入文本框的初级体验，深度对标 Google 翻译与微信图片翻译标准体验！
+              - 利用 Google ML Kit 离线文本识别精准提取每个段落文本块的矩形坐标区域 (`boundingBox: Rect`)；
+              - 采用边缘颜色采样算法智能计算图片背景底色，在原图对应位置绘制微圆角纯色遮罩层；
+              - 根据底色明暗对比度动态调整文字前景色（亮底深字/暗底白字），结合 `StaticLayout` 自适应字号 (Auto-sizing) 动态排版，让图片上的英文“直接变中文”，毫无违和感！
+            - 📱 **专属全屏沉浸式图片翻译查看器 (ImageTranslateScreen)**：
+              - 拍照或从相册选图后直接进入专属全屏沉浸式图片翻译页，免去繁琐跳转；
+              - **底部浮动控制栏**：支持一键秒切【显示译文】/【显示原文】，便于对照原文核对细节；
+              - **手势缩放与拖拽**：支持双指 1.0x ~ 5.0x 无级平滑缩放与自由拖拽平移，双击快速在 1.0x 与 2.5x 间切换；
+              - **交互点击查看与发音**：点击图片上任意翻译文本块，醒目蓝色外框高亮聚焦，底部弹出精致卡片，展示原文、译文，支持一键单独复制与 TTS 语音发音朗读！
+              - **贴心辅助功能**：右上角菜单支持一键“复制全部提取文本”、“保存翻译后的图片”至系统相册、以及“导入主输入框编辑”。
+            - ⚡ **并发批量翻译与去重缓存**：
+              - 文本块并发批量送入翻译引擎，内置并发控制与重复文本自动去重缓存，既极速响应又彻底杜绝 API 限流。
+            - 🔊 **保留双模 TTS 与自动语言对调**：
+              - 本地 TTS 优先 + 在线发音兜底双模支持；
+              - AUTO 模式下智能中英双向对调。
 
             ### 📦 安装包下载
-            - [SimpleTranslate-v1.2.0-release.apk](SimpleTranslate-v1.2.0-release.apk) (正式发布版)
-            - [SimpleTranslate-v1.2.0-debug.apk](SimpleTranslate-v1.2.0-debug.apk) (调试版)
+            - [SimpleTranslate-v1.3.0-release.apk](SimpleTranslate-v1.3.0-release.apk) (正式发布版)
+            - [SimpleTranslate-v1.3.0-debug.apk](SimpleTranslate-v1.3.0-debug.apk) (调试版)
           files: |
-            build/artifacts/SimpleTranslate-v1.2.0-release.apk
-            build/artifacts/SimpleTranslate-v1.2.0-debug.apk
+            build/artifacts/SimpleTranslate-v1.3.0-release.apk
+            build/artifacts/SimpleTranslate-v1.3.0-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -45,6 +45,7 @@ import com.translate.app.data.model.Language
 import com.translate.app.ui.components.ImagePickerBottomSheet
 import com.translate.app.ui.screens.ConversationScreen
 import com.translate.app.ui.screens.HistoryFavoritesScreen
+import com.translate.app.ui.screens.ImageTranslateScreen
 import com.translate.app.ui.screens.MainTranslateScreen
 import com.translate.app.ui.screens.SettingsScreen
 import com.translate.app.ui.theme.SimpleTranslateTheme
@@ -75,10 +76,12 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
     var onSpeechResultCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
     var pendingSpeechLang by remember { mutableStateOf<Language?>(null) }
 
-    // 图片翻译选择 Sheet
+    // 图片翻译选择 Sheet 与全屏沉浸式图片翻译页面
     var showImagePickerSheet by rememberSaveable { mutableStateOf(false) }
     var currentCameraPhotoUriString by rememberSaveable { mutableStateOf<String?>(null) }
     val currentCameraPhotoUri = currentCameraPhotoUriString?.let { Uri.parse(it) }
+    var activeImageTranslateUriString by rememberSaveable { mutableStateOf<String?>(null) }
+    val activeImageTranslateUri = activeImageTranslateUriString?.let { Uri.parse(it) }
 
     // ==========================================
     // 1. 语音输入 (STT) 回调与权限处理
@@ -122,25 +125,14 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
     }
 
     // ==========================================
-    // 2. 图片/拍照翻译 (OCR) 回调与权限处理
+    // 2. 图片/拍照翻译 (OCR) 回调与全屏图片翻译联动
     // ==========================================
-    // 拍照完成回调
+    // 拍照完成回调：直接启动沉浸式原位实景图片翻译 (ImageTranslateScreen)
     val takePhotoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
         if (success && currentCameraPhotoUri != null) {
-            Toast.makeText(context, "正在提取图片中的文字...", Toast.LENGTH_SHORT).show()
-            OcrManager.recognizeText(
-                context = context,
-                imageUri = currentCameraPhotoUri!!,
-                onSuccess = { extractedText ->
-                    viewModel.onInputTextChanged(extractedText)
-                    Toast.makeText(context, "已成功识别图片文字并为您翻译！", Toast.LENGTH_SHORT).show()
-                },
-                onError = { err ->
-                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                }
-            )
+            activeImageTranslateUriString = currentCameraPhotoUriString
         }
     }
 
@@ -158,23 +150,12 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
         }
     }
 
-    // 相册选择图片回调
+    // 相册选择图片回调：直接启动沉浸式原位实景图片翻译 (ImageTranslateScreen)
     val pickImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) {
-            Toast.makeText(context, "正在识别相册图片文字...", Toast.LENGTH_SHORT).show()
-            OcrManager.recognizeText(
-                context = context,
-                imageUri = uri,
-                onSuccess = { extractedText ->
-                    viewModel.onInputTextChanged(extractedText)
-                    Toast.makeText(context, "已成功识别相册文字并为您翻译！", Toast.LENGTH_SHORT).show()
-                },
-                onError = { err ->
-                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                }
-            )
+            activeImageTranslateUriString = uri.toString()
         }
     }
 
@@ -207,7 +188,21 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
         )
     }
 
-    Scaffold(
+    // 若当前有激活的图片翻译 Uri，展示沉浸式原位实景图片翻译页 (Google 翻译同款)
+    if (activeImageTranslateUri != null) {
+        ImageTranslateScreen(
+            imageUri = activeImageTranslateUri,
+            onClose = {
+                activeImageTranslateUriString = null
+            },
+            onImportTextToMain = { importedText ->
+                viewModel.onInputTextChanged(importedText)
+                activeImageTranslateUriString = null
+                selectedTab = 0
+            }
+        )
+    } else {
+        Scaffold(
         bottomBar = {
             NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface,
@@ -295,6 +290,7 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
             }
         }
     }
+}
 }
 
 /**
