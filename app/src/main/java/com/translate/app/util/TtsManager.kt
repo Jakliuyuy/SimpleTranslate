@@ -1,33 +1,58 @@
 package com.translate.app.util
 
 import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import com.translate.app.data.api.engine.GoogleTranslationEngine
 import com.translate.app.data.model.Language
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.net.URLEncoder
 import java.util.Locale
 
 /**
  * 高保真 Text-To-Speech (TTS) 语音朗读管理引擎
  *
- * 核心强化点：
- * 1. 异步就绪容错队列：引擎未完成初始化时发起朗读，自动排队在就绪后立即发音，拒绝“正在初始化”阻断
- * 2. 全面支持多语种精准发音匹配：涵盖中简、中繁、英、日、韩、法、德、俄、西、意、葡等全量语种
- * 3. 语言包缺失智能检测与友好提示
- * 4. 长文本自动分句分段连续播放，突破 Android 4000 字符上限
- * 5. 健全的错误监听与错误码友好中文化
+ * 核心升级（本地 + 在线双模兜底）：
+ * 1. 本地 TTS 优先：检测系统内置 TTS 引擎与离线语言包，正常情况下本地毫秒级响应
+ * 2. 在线网络发音双模兜底 (Fallback)：
+ *    - 当系统未安装 TTS 引擎、未完成初始化、不支持该语种或缺少离线数据包 (LANG_MISSING_DATA / LANG_NOT_SUPPORTED) 时，
+ *      立即自动无缝切换到高保真网络音频流播放（有道公共发音 + SimpleTranslate 中转代理 TTS + Google TTS 免 Key 接口），
+ *      彻底解决国产安卓 ROM（小米/澎湃OS、华为、OPPO、vivo等）点击喇叭静默无声的问题！
+ * 3. 规范使用 STREAM_MUSIC 媒体音频流，并智能检测媒体音量为 0 / 静音模式并提供友好提醒
+ * 4. 支持长文本智能分句分片连续播放，突破系统与接口长度限制
  */
-class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
+class TtsManager(
+    private val context: Context,
+    private val getProxyUrl: () -> String = {
+        try {
+            com.translate.app.SimpleTranslateApp.instance.preferenceRepository.googleProxyUrl
+        } catch (_: Exception) {
+            "http://129.151.9.55:8787"
+        }
+    }
+) : TextToSpeech.OnInitListener {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var isInitialized = false
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+
+    // 在线音频播放器
+    private var mediaPlayer: MediaPlayer? = null
+    // 当前播放在线流的会话标记（每次新播放递增，防止异步重入/竞态）
+    private var onlineSessionId: Long = 0L
 
     // 语速设置 (0.5f ~ 2.0f，默认 1.0f)
     var speechRate: Float = 1.0f
@@ -95,13 +120,16 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             }
         } else {
             isInitialized = false
-            pendingRequest?.onError?.invoke("系统语音引擎初始化失败，请在系统设置中检查 TTS 服务")
-            pendingRequest = null
+            // 若本地 TTS 初始化失败，若有排队请求直接切换为在线播放兜底
+            pendingRequest?.let { pending ->
+                pendingRequest = null
+                speakOnline(pending.text, pending.language, pending.onError)
+            }
         }
     }
 
     /**
-     * 播放文本语音朗读
+     * 播放文本语音朗读（本地 TTS + 在线网络发音双模兜底）
      *
      * @param text 待朗读文本
      * @param language 语种
@@ -111,40 +139,81 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         val cleanText = text.trim()
         if (cleanText.isEmpty()) return
 
+        // 停止之前的播放
+        stop()
+
+        // 检查媒体音量与静音状态，友好提示
+        checkVolumeAndNotify(onError)
+
+        // 1. 如果本地 TTS 未初始化或者不可用，直接无缝走在线网络发音兜底
         if (!isInitialized || tts == null) {
-            // 引擎还在加载中，记录待播放请求，初始化完成后自动发音
-            pendingRequest = PendingSpeakRequest(cleanText, language, onError)
+            speakOnline(cleanText, language, onError)
+            return
+        }
+
+        val engine = tts ?: run {
+            speakOnline(cleanText, language, onError)
             return
         }
 
         val targetLocale = resolveLocale(cleanText, language)
-        val engine = tts ?: return
 
-        // 检查目标语种在当前设备 TTS 中的支持状态
-        val availability = engine.isLanguageAvailable(targetLocale)
-        if (availability == TextToSpeech.LANG_NOT_SUPPORTED) {
-            // 尝试回退
-            val fallbackLocale = resolveFallbackLocale(targetLocale)
-            val fbAvailability = engine.isLanguageAvailable(fallbackLocale)
-            if (fbAvailability == TextToSpeech.LANG_NOT_SUPPORTED || fbAvailability == TextToSpeech.LANG_MISSING_DATA) {
-                onError?.invoke("当前系统语音引擎不支持 ${language.displayName} 朗读，请在系统【设置 -> 无障碍 -> 文字转语音】中安装该语种语音包")
-                return
-            }
-            engine.language = fallbackLocale
-        } else if (availability == TextToSpeech.LANG_MISSING_DATA) {
-            onError?.invoke("当前设备缺少 ${language.displayName} 的语音数据包，请在系统 TTS 设置中下载更新")
-            // 仍尝试设置，系统可能会在线拉取或回退
-            engine.language = targetLocale
-        } else {
-            engine.language = targetLocale
+        // 2. 检查本地语种支持状态
+        val availability = try {
+            engine.isLanguageAvailable(targetLocale)
+        } catch (_: Exception) {
+            TextToSpeech.LANG_NOT_SUPPORTED
         }
 
-        // 处理长文本分段朗读（避免超过系统限制 4000 字符）
+        val effectiveLocale: Locale? = when (availability) {
+            TextToSpeech.LANG_AVAILABLE,
+            TextToSpeech.LANG_COUNTRY_AVAILABLE,
+            TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE -> targetLocale
+
+            TextToSpeech.LANG_MISSING_DATA,
+            TextToSpeech.LANG_NOT_SUPPORTED -> {
+                // 尝试回退 Locale
+                val fallbackLocale = resolveFallbackLocale(targetLocale)
+                val fbAvail = try {
+                    engine.isLanguageAvailable(fallbackLocale)
+                } catch (_: Exception) {
+                    TextToSpeech.LANG_NOT_SUPPORTED
+                }
+                if (fbAvail == TextToSpeech.LANG_AVAILABLE || fbAvail == TextToSpeech.LANG_COUNTRY_AVAILABLE) {
+                    fallbackLocale
+                } else {
+                    null // 本地 TTS 完全不支持或缺少离线语音包
+                }
+            }
+            else -> null
+        }
+
+        // 若本地 TTS 缺少离线语音包或不支持该语言，立即无缝自动切换到在线网络发音
+        if (effectiveLocale == null) {
+            speakOnline(cleanText, language, onError)
+            return
+        }
+
+        // 尝试设置本地语言
+        try {
+            val setLangResult = engine.setLanguage(effectiveLocale)
+            if (setLangResult == TextToSpeech.LANG_MISSING_DATA || setLangResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                speakOnline(cleanText, language, onError)
+                return
+            }
+        } catch (_: Exception) {
+            speakOnline(cleanText, language, onError)
+            return
+        }
+
+        // 本地 TTS 播放
         val chunks = splitTextIntoChunks(cleanText, 500)
         _isSpeaking.value = true
 
         val baseUtteranceId = "tts_${System.currentTimeMillis()}"
+        var hasError = false
         chunks.forEachIndexed { index, chunk ->
+            if (hasError) return@forEachIndexed
             val queueMode = if (index == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
             val utteranceId = if (index == chunks.size - 1) "${baseUtteranceId}_last" else "${baseUtteranceId}_$index"
 
@@ -153,11 +222,149 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
             }
             val result = engine.speak(chunk, queueMode, params, utteranceId)
             if (result == TextToSpeech.ERROR) {
-                _isSpeaking.value = false
-                onError?.invoke("语音播放失败，请稍后重试")
-                return
+                hasError = true
             }
         }
+
+        if (hasError) {
+            // 本地 speak 调用返回 ERROR，立即切换到在线网络发音
+            _isSpeaking.value = false
+            speakOnline(cleanText, language, onError)
+        }
+    }
+
+    /**
+     * 在线网络音频流高保真发音（多源容错兜底）
+     */
+    fun speakOnline(text: String, language: Language, onError: ((String) -> Unit)? = null) {
+        val cleanText = text.trim()
+        if (cleanText.isEmpty()) return
+
+        val sessionId = ++onlineSessionId
+        val chunks = splitTextIntoChunks(cleanText, 150)
+        if (chunks.isEmpty()) return
+
+        _isSpeaking.value = true
+        playOnlineChunk(chunks, 0, sessionId, language, onError)
+    }
+
+    private fun playOnlineChunk(
+        chunks: List<String>,
+        chunkIndex: Int,
+        sessionId: Long,
+        language: Language,
+        onError: ((String) -> Unit)?
+    ) {
+        if (sessionId != onlineSessionId) return
+
+        if (chunkIndex >= chunks.size) {
+            _isSpeaking.value = false
+            return
+        }
+
+        val chunk = chunks[chunkIndex]
+        val candidateUrls = buildOnlineAudioUrls(chunk, language, getProxyUrl())
+        if (candidateUrls.isEmpty()) {
+            _isSpeaking.value = false
+            onError?.invoke("未找到适用的发音资源")
+            return
+        }
+
+        tryPlaySource(chunks, chunkIndex, candidateUrls, 0, sessionId, language, onError)
+    }
+
+    private fun tryPlaySource(
+        chunks: List<String>,
+        chunkIndex: Int,
+        candidateUrls: List<String>,
+        sourceIndex: Int,
+        sessionId: Long,
+        language: Language,
+        onError: ((String) -> Unit)?
+    ) {
+        if (sessionId != onlineSessionId) return
+
+        if (sourceIndex >= candidateUrls.size) {
+            // 当前切片的所有音频源均失败
+            if (chunkIndex == 0) {
+                _isSpeaking.value = false
+                onError?.invoke("网络发音暂不可用，请检查网络连接")
+            } else {
+                playOnlineChunk(chunks, chunkIndex + 1, sessionId, language, onError)
+            }
+            return
+        }
+
+        val url = candidateUrls[sourceIndex]
+
+        mainHandler.post {
+            if (sessionId != onlineSessionId) return@post
+
+            try {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer().apply {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        setAudioStreamType(AudioManager.STREAM_MUSIC)
+                    }
+
+                    val headers = mapOf(
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    )
+                    setDataSource(context.applicationContext, Uri.parse(url), headers)
+
+                    setOnPreparedListener { mp ->
+                        if (sessionId == onlineSessionId) {
+                            try {
+                                mp.start()
+                                _isSpeaking.value = true
+                            } catch (_: Exception) {
+                                tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
+                            }
+                        }
+                    }
+
+                    setOnCompletionListener {
+                        if (sessionId == onlineSessionId) {
+                            playOnlineChunk(chunks, chunkIndex + 1, sessionId, language, onError)
+                        }
+                    }
+
+                    setOnErrorListener { _, _, _ ->
+                        if (sessionId == onlineSessionId) {
+                            tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
+                        }
+                        true
+                    }
+
+                    prepareAsync()
+                }
+            } catch (_: Exception) {
+                tryPlaySource(chunks, chunkIndex, candidateUrls, sourceIndex + 1, sessionId, language, onError)
+            }
+        }
+    }
+
+    /**
+     * 检查当前媒体音量并给出友好提醒
+     */
+    private fun checkVolumeAndNotify(onError: ((String) -> Unit)?) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (audioManager != null) {
+                val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                if (volume == 0) {
+                    onError?.invoke("提示：当前媒体音量为 0，请调大音量收听朗读")
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     /**
@@ -165,9 +372,21 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
      */
     fun stop() {
         pendingRequest = null
+        onlineSessionId++ // 使正在等待的在线切片和回调失效
+
         try {
             tts?.stop()
         } catch (_: Exception) {}
+
+        mainHandler.post {
+            try {
+                if (mediaPlayer?.isPlaying == true) {
+                    mediaPlayer?.stop()
+                }
+                mediaPlayer?.reset()
+            } catch (_: Exception) {}
+        }
+
         _isSpeaking.value = false
     }
 
@@ -181,6 +400,13 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
         } catch (_: Exception) {}
         tts = null
         isInitialized = false
+
+        mainHandler.post {
+            try {
+                mediaPlayer?.release()
+            } catch (_: Exception) {}
+            mediaPlayer = null
+        }
     }
 
     /**
@@ -240,7 +466,56 @@ class TtsManager(private val context: Context) : TextToSpeech.OnInitListener {
 
     companion object {
         /**
-         * 将长文本按照标点符号合理分句切片，保留标点符号停顿，防止超过系统限制 (如 Android 4000 字符限制)
+         * 构建在线发音音频流候选 URL 列表（多源智能容错优先级）
+         */
+        fun buildOnlineAudioUrls(chunk: String, language: Language, proxyBaseUrl: String): List<String> {
+            val clean = chunk.trim()
+            if (clean.isEmpty()) return emptyList()
+
+            val urls = mutableListOf<String>()
+            val encoded = try {
+                URLEncoder.encode(clean, "UTF-8")
+            } catch (_: Exception) {
+                clean
+            }
+            val googleLang = GoogleTranslationEngine.toGoogleLanguageCode(language)
+
+            // 1. 有道词典在线发音（短词/短语，不超过 2 个单词且字符数 <= 25，国内免梯子直连秒开）
+            val wordCount = clean.split("\\s+".toRegex()).filter { it.isNotBlank() }.size
+            val isShortWord = wordCount <= 2 && clean.length <= 25
+
+            if (isShortWord) {
+                when (language.code.lowercase()) {
+                    "en" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&type=2")
+                    "zh", "zh-cn" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=zh")
+                    "ja" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=jap")
+                    "ko" -> urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=ko")
+                }
+            }
+
+            // 2. SimpleTranslate 中转代理 TTS 音频流（国内免梯子直连中转，长句短句多语种全覆盖）
+            val trimmedProxy = proxyBaseUrl.trim().trimEnd('/')
+            if (trimmedProxy.isNotBlank() && (trimmedProxy.startsWith("http://") || trimmedProxy.startsWith("https://"))) {
+                urls.add("$trimmedProxy/api/tts?text=$encoded&lang=$googleLang")
+            }
+
+            // 3. Google 官方公开免 Key TTS 音频流 (全语种长句直连)
+            urls.add("https://translate.google.com/translate_tts?ie=UTF-8&tl=$googleLang&client=tw-ob&q=$encoded")
+
+            // 4. 若为短文本外的中英文，兜底追加有道发音
+            if (!isShortWord) {
+                if (language.code.lowercase().startsWith("en")) {
+                    urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&type=2")
+                } else if (language.code.lowercase().startsWith("zh")) {
+                    urls.add("https://dict.youdao.com/dictvoice?audio=$encoded&le=zh")
+                }
+            }
+
+            return urls
+        }
+
+        /**
+         * 将长文本按照标点符号合理分句切片，保留标点符号停顿，防止超过系统或接口限制
          */
         fun splitTextIntoChunks(text: String, maxChunkSize: Int = 500): List<String> {
             if (text.length <= maxChunkSize) {

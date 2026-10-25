@@ -82,6 +82,16 @@ class TranslateViewModel : ViewModel() {
             return
         }
 
+        // 若源语言为【自动检测 (AUTO)】，根据输入文本特征进行智能判断与目标语言动态对调：
+        // 中文 -> 目标语言设为英文 (Language.EN)；英文及其他语种 -> 目标语言设为中文 (Language.ZH)
+        if (_sourceLanguage.value == Language.AUTO) {
+            val autoTarget = Language.autoDetectTargetLanguage(newText, _targetLanguage.value)
+            if (_targetLanguage.value != autoTarget) {
+                _targetLanguage.value = autoTarget
+                prefRepo.lastTargetLang = autoTarget.code
+            }
+        }
+
         debounceJob = viewModelScope.launch {
             delay(500) // 防抖 500ms
             performTranslate(newText)
@@ -130,6 +140,15 @@ class TranslateViewModel : ViewModel() {
         debounceJob?.cancel()
         val text = _inputText.value.trim()
         if (text.isEmpty()) return
+
+        if (_sourceLanguage.value == Language.AUTO) {
+            val autoTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
+            if (_targetLanguage.value != autoTarget) {
+                _targetLanguage.value = autoTarget
+                prefRepo.lastTargetLang = autoTarget.code
+            }
+        }
+
         viewModelScope.launch {
             performTranslate(text)
         }
@@ -137,6 +156,19 @@ class TranslateViewModel : ViewModel() {
 
     private suspend fun performTranslate(text: String) {
         _isLoading.value = true
+
+        // 防冲突安全校验：若源语言为 AUTO，彻底避免中译中或英译英尴尬情况
+        if (_sourceLanguage.value == Language.AUTO) {
+            val hasChinese = text.any { it.code in 0x4E00..0x9FA5 }
+            if (hasChinese && _targetLanguage.value == Language.ZH) {
+                _targetLanguage.value = Language.EN
+                prefRepo.lastTargetLang = Language.EN.code
+            } else if (!hasChinese && text.any { Character.isLetter(it) } && _targetLanguage.value == Language.EN) {
+                _targetLanguage.value = Language.ZH
+                prefRepo.lastTargetLang = Language.ZH.code
+            }
+        }
+
         val result = repository.translate(
             text = text,
             from = _sourceLanguage.value,
@@ -161,7 +193,12 @@ class TranslateViewModel : ViewModel() {
     }
 
     fun speak(text: String, language: Language, onError: ((String) -> Unit)? = null) {
-        ttsManager.speak(text, language, onError)
+        val resolvedLang = if (language == Language.AUTO) {
+            if (text.any { it.code in 0x4E00..0x9FA5 }) Language.ZH else Language.EN
+        } else {
+            language
+        }
+        ttsManager.speak(text, resolvedLang, onError)
     }
 
     fun stopSpeaking() {

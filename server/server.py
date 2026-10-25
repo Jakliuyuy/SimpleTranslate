@@ -109,6 +109,28 @@ def request_google_translate(text: str, sl: str, tl: str, timeout: float = 10.0)
 
     raise RuntimeError(f"Google 翻译接口请求失败: {last_error}")
 
+def request_google_tts(text: str, lang: str = "en", timeout: float = 10.0) -> bytes:
+    lang = normalize_lang(lang)
+    if lang == "auto":
+        has_chinese = any(0x4E00 <= ord(c) <= 0x9FA5 for c in text)
+        lang = "zh-CN" if has_chinese else "en"
+
+    query_params = {
+        "ie": "UTF-8",
+        "tl": lang,
+        "client": "tw-ob",
+        "q": text
+    }
+    url = f"https://translate.google.com/translate_tts?{urllib.parse.urlencode(query_params)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": DEFAULT_USER_AGENT
+        }
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.read()
+
 class ProxyHandler(BaseHTTPRequestHandler):
 
     def send_json(self, status_code: int, data: dict):
@@ -121,6 +143,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_audio(self, status_code: int, audio_bytes: bytes, content_type: str = "audio/mpeg"):
+        self.send_response(status_code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(audio_bytes)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+        self.send_header("Accept-Ranges", "bytes")
+        self.end_headers()
+        self.wfile.write(audio_bytes)
 
     def do_OPTIONS(self):
         self.send_response(HTTPStatus.NO_CONTENT)
@@ -137,10 +170,34 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "status": "ok",
                 "service": "SimpleTranslate-GoogleProxy",
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "timestamp": int(time.time()),
                 "message": "Google Translation Proxy is running smoothly."
             })
+            return
+
+        if path == "/api/tts":
+            params = urllib.parse.parse_qs(parsed.query)
+            text = (params.get("text") or params.get("q") or [""])[0]
+            lang = (params.get("lang") or params.get("tl") or ["en"])[0]
+
+            if not text.strip():
+                self.send_json(400, {
+                    "code": 400,
+                    "success": False,
+                    "error": "缺少待发音文本 (text 或 q)"
+                })
+                return
+
+            try:
+                audio_data = request_google_tts(text=text.strip(), lang=lang.strip())
+                self.send_audio(200, audio_data)
+            except Exception as e:
+                self.send_json(500, {
+                    "code": 500,
+                    "success": False,
+                    "error": f"TTS生成失败: {e}"
+                })
             return
 
         if path == "/api/translate":

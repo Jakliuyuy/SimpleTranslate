@@ -264,5 +264,61 @@ class TranslationEngineTest {
             assertTrue(chunk.length <= 100)
         }
     }
+
+    @Test
+    fun testAutoDetectTargetLanguage() {
+        // 1. 中文输入 -> 目标语言为英文 (Language.EN)
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage("你好"))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage("你好，世界！"))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage("请帮我 review 这个 PR"))
+
+        // 2. 纯英文输入 -> 目标语言为中文 (Language.ZH)
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("hello"))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("Good morning everyone."))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("How are you doing today?"))
+
+        // 3. 其他非中文语种 -> 目标语言为中文 (Language.ZH)
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("こんにちは"))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("안녕하세요"))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("Bonjour tout le monde"))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("Привет, как дела?"))
+
+        // 4. 空白与纯符号/数字 -> 保持当前目标语言
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("", Language.ZH))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage("   ", Language.EN))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage("12345", Language.EN))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage("???!!!", Language.ZH))
+    }
+
+    @Test
+    fun testBuildOnlineAudioUrls() {
+        val proxyBase = "http://129.151.9.55:8787"
+
+        // 1. 英文短词 -> 优先有道美音，同时提供中转代理与 Google 官方音频流
+        val enShortUrls = com.translate.app.util.TtsManager.buildOnlineAudioUrls("hello", Language.EN, proxyBase)
+        assertTrue(enShortUrls.isNotEmpty())
+        assertTrue(enShortUrls.any { it.contains("dict.youdao.com") && it.contains("type=2") })
+        assertTrue(enShortUrls.any { it.contains("129.151.9.55:8787/api/tts") && it.contains("lang=en") })
+        assertTrue(enShortUrls.any { it.contains("translate.google.com/translate_tts") && it.contains("tl=en") })
+
+        // 2. 中文短词 -> 优先有道中文发音，同时包含中转代理与 Google 官方音频流
+        val zhShortUrls = com.translate.app.util.TtsManager.buildOnlineAudioUrls("你好", Language.ZH, proxyBase)
+        assertTrue(zhShortUrls.isNotEmpty())
+        assertTrue(zhShortUrls.any { it.contains("dict.youdao.com") && it.contains("le=zh") })
+        assertTrue(zhShortUrls.any { it.contains("129.151.9.55:8787/api/tts") && it.contains("lang=zh-CN") })
+        assertTrue(zhShortUrls.any { it.contains("translate.google.com/translate_tts") && it.contains("tl=zh-CN") })
+
+        // 3. 英文长句 -> 包含中转代理与 Google 官方流，URL 已安全转义
+        val enLongText = "This is a longer English sentence for audio playback testing."
+        val enLongUrls = com.translate.app.util.TtsManager.buildOnlineAudioUrls(enLongText, Language.EN, proxyBase)
+        assertTrue(enLongUrls.isNotEmpty())
+        assertTrue(enLongUrls.none { it.contains(" ") }) // 验证空格已被 URL 编码，无非法空格
+        assertTrue(enLongUrls.any { it.contains("129.151.9.55:8787/api/tts") })
+        assertTrue(enLongUrls.any { it.contains("translate.google.com/translate_tts") })
+
+        // 4. 空文本返回空列表
+        val emptyUrls = com.translate.app.util.TtsManager.buildOnlineAudioUrls("  ", Language.EN, proxyBase)
+        assertTrue(emptyUrls.isEmpty())
+    }
 }
 

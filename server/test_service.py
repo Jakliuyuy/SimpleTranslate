@@ -53,5 +53,14 @@ class TestGoogleProxy(unittest.TestCase):
             self.assertFalse(data["success"])
             self.assertEqual(data["code"], 400)
 
+    def test_tts_endpoint(self):
+        import urllib.request
+        url = "http://127.0.0.1:8787/api/tts?text=Good+morning&lang=en"
+        with urllib.request.urlopen(url) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertEqual(resp.headers.get("Content-Type"), "audio/mpeg")
+            data = resp.read()
+            self.assertGreater(len(data), 1000)
+
 if __name__ == "__main__":
     unittest.main()

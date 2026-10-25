@@ -38,8 +38,8 @@ jobs:
       - name: Organize APK Artifacts
         run: |
           mkdir -p build/artifacts
-          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.1.0-release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.1.0-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk build/artifacts/SimpleTranslate-v1.2.0-release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk build/artifacts/SimpleTranslate-v1.2.0-debug.apk
           ls -lh build/artifacts/
 
       - name: Upload APK Artifacts
@@ -52,30 +52,31 @@ jobs:
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.1.0
-          name: "SimpleTranslate v1.1.0 (Google Proxy, Image Translation & Enhanced Voice)"
+          tag_name: v1.2.0
+          name: "SimpleTranslate v1.2.0 (Dual-Mode TTS & Smart Bidirectional Auto Translation)"
           body: |
-            ## 🎉 SimpleTranslate 极简谷歌翻译 Android APP v1.1.0 重磅发布
+            ## 🎉 SimpleTranslate 极简谷歌翻译 Android APP v1.2.0 重磅发布
 
             ### 🚀 核心新特性与全面升级
-            - 🌐 **内置 Google 翻译引擎（免 Key / 官方直连与美国服务器中转代理双模）**：
-              - 客户端免 Key 即可调用 Google 官方高质量翻译。
-              - 内置美国专用中转服务器代理（默认预置 `http://129.151.9.55:8787`），彻底解决国内网络无法直连 Google 的痛点；支持海外网络一键切换官方直连模式。
-              - 提供配套开源轻量级代理服务端（位于 `/server`），纯标准库零外部依赖，守护进程即开即用。
-            - 📷 **图片与拍照翻译（高精度离线 OCR）**：
-              - 完美复刻 Google 翻译界面相机入口，提供“拍照识别”与“相册导入”双入口。
-              - 集成 Google ML Kit 离线文字识别引擎，毫秒级快速提取中英日韩等多国语言文字，无缝填入并自动触发翻译。
-            - 🎙️ **强化语音引擎（STT 录音输入与高保真 TTS 朗读）**：
-              - 全面强化 TTS 语音合成：多语种高保真发音智能匹配、异步初始化队列自动重放、超长文本分句连续朗读、错误友好提示。
-              - 强化 STT 语音识别：完善麦克风录音权限优雅引导、多语种动态语调偏好匹配、系统缺少语音组件友好拦截。
-            - 🔑 **多翻译引擎全面支持**：
-              - 支持 Google 翻译、百度翻译开放平台、网易有道智云、腾讯云机器翻译及离线 Mock 引擎自由切换。
+            - 🔊 **语音朗读重大升级：本地 TTS + 在线网络发音音频双模兜底（Fallback）**：
+              - 彻底解决小米澎湃OS、华为、OPPO、vivo 等绝大多数国产安卓真机因未预装 Google TTS 引擎或缺少离线语音包导致点击喇叭无声的痛点！
+              - 本地 TTS 不可用或缺语言包时，立即自动平滑无缝切换到免 Key 高保真在线网络音频流发音（有道发音 + 美国中转代理 TTS + Google TTS 免 Key 接口）。
+              - 规范使用 `STREAM_MUSIC` 媒体音频流，并在手机媒体音量为 0 或静音模式时提供友好提示。
+              - 在 `AndroidManifest.xml` 中声明 `TTS_SERVICE` 查询意图，全面适配 Android 11+ 包可见性机制。
+            - 🔄 **自动检测模式下的智能中英互译双向对调**：
+              - 当源语言为【自动检测 (AUTO)】时，随用户输入或粘贴实时智能识别语种特征：
+                - 输入中文 -> 自动将目标语言动态对齐切换为英文 (`Language.EN`)，执行中译英；
+                - 输入英文及其他语种 -> 自动将目标语言动态对齐切换为中文 (`Language.ZH`)，执行英译中；
+              - 界面目标语言动态同步联动，支持用户随时手动切换，彻底根除“中译中”尴尬情况。
+            - 🌐 **内置 Google 翻译引擎与轻量中转代理服务端**：
+              - 内置免 Key 官方直连与美国专用中转代理服务器双模支持。
+              - 中转代理服务端新增 `/api/tts` 高保真语音流代理端点。
 
             ### 📦 安装包下载
-            - [SimpleTranslate-v1.1.0-release.apk](SimpleTranslate-v1.1.0-release.apk) (正式发布版)
-            - [SimpleTranslate-v1.1.0-debug.apk](SimpleTranslate-v1.1.0-debug.apk) (调试版)
+            - [SimpleTranslate-v1.2.0-release.apk](SimpleTranslate-v1.2.0-release.apk) (正式发布版)
+            - [SimpleTranslate-v1.2.0-debug.apk](SimpleTranslate-v1.2.0-debug.apk) (调试版)
           files: |
-            build/artifacts/SimpleTranslate-v1.1.0-release.apk
-            build/artifacts/SimpleTranslate-v1.1.0-debug.apk
+            build/artifacts/SimpleTranslate-v1.2.0-release.apk
+            build/artifacts/SimpleTranslate-v1.2.0-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

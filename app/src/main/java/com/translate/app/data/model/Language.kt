@@ -131,5 +131,25 @@ data class Language(
             // 4. 包含 "zh" 判定为中文，否则保底英文
             return if (clean.contains("zh")) ZH else EN
         }
+
+        /**
+         * 根据输入文本特征，为自动检测 (AUTO) 模式推导合适的目标语言：
+         * 1. 包含汉字 ([\u4e00-\u9fa5]) -> 输入为中文，目标语言动态对齐为英文 (Language.EN)
+         * 2. 不含汉字且包含字母/外语字符 -> 输入为英文或其他语种，目标语言动态对齐为中文 (Language.ZH)
+         * 3. 纯空白、数字或符号 -> 保持当前目标语言
+         */
+        fun autoDetectTargetLanguage(text: String, currentTarget: Language = ZH): Language {
+            val clean = text.trim()
+            if (clean.isEmpty()) return currentTarget
+            val hasChinese = clean.any { it.code in 0x4E00..0x9FA5 }
+            if (hasChinese) {
+                return EN
+            }
+            val hasLetterOrForeign = clean.any { Character.isLetter(it) }
+            if (hasLetterOrForeign) {
+                return ZH
+            }
+            return if (currentTarget == AUTO) ZH else currentTarget
+        }
     }
 }

@@ -10,6 +10,16 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- 解决 Android 11+ 包可见性限制，允许查询系统 TTS 引擎与语音识别服务 -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:name=".SimpleTranslateApp"
         android:allowBackup="true"
