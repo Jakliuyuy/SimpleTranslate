@@ -42,6 +42,14 @@
 }
 -dontwarn kotlinx.coroutines.**
 
-# Jetpack Compose
+# Jetpack Compose & Lifecycle
 -keep class androidx.compose.runtime.** { *; }
+-keep class * extends androidx.lifecycle.ViewModel {
+    <init>(...);
+}
+-keep class * extends androidx.lifecycle.AndroidViewModel {
+    <init>(...);
+}
+-keep class com.translate.app.ui.viewmodel.** { *; }
+-keep class com.translate.app.util.** { *; }
 -dontwarn androidx.compose.**
