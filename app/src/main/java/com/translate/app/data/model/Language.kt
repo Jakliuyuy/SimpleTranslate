@@ -245,19 +245,18 @@ data class Language(
             if (stats.totalLetterOrCharCount == 0) return EN
 
             // 1. 日文假名判定：
-            // 日语中平假名与片假名为日文独有（中文绝对不含假名）。
-            // 当假名存在且占汉字与假名总数的 15% 以上，或假名数 >= 3，或纯假名时，精准判定为日文
-            val totalCJK = stats.kanaCount + stats.chineseCount
-            val kanaRatio = if (totalCJK > 0) stats.kanaCount.toFloat() / totalCJK else 0f
-            if (stats.kanaCount > 0 && (kanaRatio >= 0.15f || stats.kanaCount >= 3 || stats.chineseCount == 0)) {
+            // 平假名与片假名为日文独有。假名占优需同时满足：假名不被英文稀释 (kanaCount >= latinCount) 且在 CJK 混合中占合理比例
+            val totalKanaAndHan = stats.kanaCount + stats.chineseCount
+            val kanaRatio = if (totalKanaAndHan > 0) stats.kanaCount.toFloat() / totalKanaAndHan else 0f
+            if (stats.kanaCount > 0 && stats.kanaCount >= stats.latinCount && (kanaRatio >= 0.15f || stats.chineseCount == 0 || stats.kanaCount >= 3)) {
                 return JA
             }
 
             // 2. 韩文 (Hangul) 判定：
-            // 韩文谚文为韩语特有。当存在韩文且未被海量汉字稀释时判定为韩文
-            val totalHangulCJK = stats.hangulCount + stats.chineseCount
-            val hangulRatio = if (totalHangulCJK > 0) stats.hangulCount.toFloat() / totalHangulCJK else 0f
-            if (stats.hangulCount > 0 && (hangulRatio >= 0.15f || stats.hangulCount >= 3 || stats.chineseCount == 0)) {
+            // 韩文谚文为韩语特有。谚文占优需同时满足：谚文不被英文稀释 (hangulCount >= latinCount) 且在与汉字混合中占合理比例
+            val totalHangulAndHan = stats.hangulCount + stats.chineseCount
+            val hangulRatio = if (totalHangulAndHan > 0) stats.hangulCount.toFloat() / totalHangulAndHan else 0f
+            if (stats.hangulCount > 0 && stats.hangulCount >= stats.latinCount && (hangulRatio >= 0.15f || stats.chineseCount == 0 || stats.hangulCount >= 3)) {
                 return KO
             }
 
@@ -276,8 +275,10 @@ data class Language(
                 return TH
             }
 
-            // 6. 中文与英文/拉丁语系主体比较 (Dominant Language Detection)
-            // 汉字表意词素加权系数为 2.8，英文字母加权系数为 1.0
+            // 6. 中文与英文/拉丁语系主体比较 (Dominant Language Detection 权重占比算法)
+            // 汉字为独立表意词素，平均对应 2.8 个英文字母。加权对比可精准兼顾：
+            // (1) 中文主体混排少量英文术语（如 "请帮我 review 这个 PR"、"中英混排测试 with English words"）精准判定为中文
+            // (2) 英文主体截图包含少量状态栏/微量 UI 汉字（如 "中国移动 9:41"、大量英文正文）精准判定为英文
             val weightedChinese = stats.chineseCount * 2.8f
             val weightedLatin = stats.latinCount * 1.0f
 

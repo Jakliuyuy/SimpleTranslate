@@ -72,6 +72,8 @@ class TranslateViewModel : ViewModel() {
         loadFavorites()
     }
 
+    private var isTargetManuallyModified: Boolean = false
+
     fun onInputTextChanged(newText: String) {
         _inputText.value = newText
         debounceJob?.cancel()
@@ -83,12 +85,16 @@ class TranslateViewModel : ViewModel() {
         }
 
         // 若源语言为【自动检测 (AUTO)】，根据输入文本特征进行智能判断与目标语言动态对调：
-        // 中文 -> 目标语言设为英文 (Language.EN)；英文及其他语种 -> 目标语言设为中文 (Language.ZH)
+        // 保护机制：尊重用户手动选择的目标语言；若未手动修改或与检测语种产生同语种冲突，执行自动对调
         if (_sourceLanguage.value == Language.AUTO) {
-            val autoTarget = Language.autoDetectTargetLanguage(newText, _targetLanguage.value)
-            if (_targetLanguage.value != autoTarget) {
-                _targetLanguage.value = autoTarget
-                prefRepo.lastTargetLang = autoTarget.code
+            val detected = Language.detectLanguage(newText)
+            val shouldAutoAlign = !isTargetManuallyModified || (_targetLanguage.value == detected)
+            if (shouldAutoAlign) {
+                val autoTarget = Language.autoDetectTargetLanguage(newText, _targetLanguage.value)
+                if (_targetLanguage.value != autoTarget) {
+                    _targetLanguage.value = autoTarget
+                    prefRepo.lastTargetLang = autoTarget.code
+                }
             }
         }
 
@@ -102,17 +108,21 @@ class TranslateViewModel : ViewModel() {
         _sourceLanguage.value = lang
         prefRepo.lastSourceLang = lang.code
         val text = _inputText.value.trim()
-        if (text.isNotEmpty() && lang == Language.AUTO) {
-            val autoTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
-            if (_targetLanguage.value != autoTarget) {
-                _targetLanguage.value = autoTarget
-                prefRepo.lastTargetLang = autoTarget.code
+        if (lang == Language.AUTO) {
+            isTargetManuallyModified = false
+            if (text.isNotEmpty()) {
+                val autoTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
+                if (_targetLanguage.value != autoTarget) {
+                    _targetLanguage.value = autoTarget
+                    prefRepo.lastTargetLang = autoTarget.code
+                }
             }
         }
         triggerImmediateTranslate()
     }
 
     fun setTargetLanguage(lang: Language) {
+        isTargetManuallyModified = true
         _targetLanguage.value = lang
         prefRepo.lastTargetLang = lang.code
         // 用户手动选择目标语言时，直接执行即时翻译，绝不覆盖用户手动选择的目标语言
@@ -138,6 +148,7 @@ class TranslateViewModel : ViewModel() {
             currentSrc
         }
 
+        isTargetManuallyModified = true
         _sourceLanguage.value = newSrc
         _targetLanguage.value = newTgt
         prefRepo.lastSourceLang = newSrc.code
@@ -164,12 +175,16 @@ class TranslateViewModel : ViewModel() {
     private suspend fun performTranslate(text: String) {
         _isLoading.value = true
 
-        // 防冲突安全校验：若源语言为 AUTO，基于主体语言推导目标语言，彻底避免二值误判导致中译中或英译英
+        // 防冲突安全校验：若源语言为 AUTO，仅在非手动修改或存在同语种冲突时推导目标语言
         if (_sourceLanguage.value == Language.AUTO) {
-            val desiredTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
-            if (_targetLanguage.value != desiredTarget) {
-                _targetLanguage.value = desiredTarget
-                prefRepo.lastTargetLang = desiredTarget.code
+            val detected = Language.detectLanguage(text)
+            val shouldAutoAlign = !isTargetManuallyModified || (_targetLanguage.value == detected)
+            if (shouldAutoAlign) {
+                val desiredTarget = Language.autoDetectTargetLanguage(text, _targetLanguage.value)
+                if (_targetLanguage.value != desiredTarget) {
+                    _targetLanguage.value = desiredTarget
+                    prefRepo.lastTargetLang = desiredTarget.code
+                }
             }
         }
 

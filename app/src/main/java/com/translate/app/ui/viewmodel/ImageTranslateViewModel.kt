@@ -75,7 +75,10 @@ class ImageTranslateViewModel : ViewModel() {
 
                     // 若用户未手动修改过目标语言且源语言为 AUTO，基于图片提取出的主体语言自动联动目标语言：
                     // 主体是中文 -> 目标对齐为英文 (Language.EN)；主体是英文或其他外语 -> 目标对齐为中文 (Language.ZH)
-                    if (!isTargetManuallyModified && currentSrc == Language.AUTO) {
+                    // 保护机制：若用户手动指定了目标语言，但在检测到同语种冲突时自动对调
+                    val detected = Language.detectLanguage(combinedText)
+                    val shouldAutoAlign = !isTargetManuallyModified || (effTarget == detected)
+                    if (currentSrc == Language.AUTO && shouldAutoAlign) {
                         effTarget = Language.autoDetectTargetLanguage(combinedText, effTarget)
                     }
 
@@ -229,8 +232,14 @@ class ImageTranslateViewModel : ViewModel() {
     fun setSourceLanguage(newSource: Language) {
         if (_uiState.value.sourceLanguage == newSource) return
         var newTarget = _uiState.value.targetLanguage
-        // 若手动选择的源语言与当前目标语言冲突，智能对调目标语言
-        if (newSource != Language.AUTO && newSource == newTarget) {
+        if (newSource == Language.AUTO) {
+            isTargetManuallyModified = false
+            val combinedText = _uiState.value.blocks.joinToString("\n") { it.originalText }
+            if (combinedText.isNotBlank()) {
+                newTarget = Language.autoDetectTargetLanguage(combinedText, newTarget)
+            }
+        } else if (newSource == newTarget) {
+            // 若手动选择的源语言与当前目标语言冲突，智能对调目标语言
             newTarget = if (newSource == Language.ZH) Language.EN else Language.ZH
         }
         _uiState.update {

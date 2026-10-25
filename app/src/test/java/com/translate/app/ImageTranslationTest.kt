@@ -618,4 +618,42 @@ class ImageTranslationTest {
         // 平均行高 50f，基准 36f，最大不超过 36 * 1.25 = 45f
         assertTrue("Short text size in 2-line box should be capped around line height", autoFitSize <= 45f)
     }
+
+    @Test
+    fun testTargetLanguageProtectionAndAutoRealignment() {
+        // 场景 1: 用户在 AUTO 模式下手动选择了目标语言为日语 (JA)
+        // 图片文本为英文，此时目标语言不与英文冲突，保护用户的手动选择，不强制覆盖为中文
+        val englishText = "Settings and Network Preferences"
+        val detected = Language.detectLanguage(englishText)
+        assertEquals(Language.EN, detected)
+
+        var isTargetManuallyModified = true
+        var currentSource = Language.AUTO
+        var currentTarget = Language.JA
+
+        // 模拟 ViewModel 中的保护逻辑
+        val shouldAutoAlign = !isTargetManuallyModified || (currentTarget == detected)
+        if (currentSource == Language.AUTO && shouldAutoAlign) {
+            currentTarget = Language.autoDetectTargetLanguage(englishText, currentTarget)
+        }
+        // 验证用户选择的 JA 得到了严格保护！
+        assertEquals(Language.JA, currentTarget)
+
+        // 场景 2: 用户手动选了英文 (EN)，但图片文本也是英文 (EN) -> 产生英译英冲突，必须自动避让为中文 (ZH)
+        currentTarget = Language.EN
+        val shouldAutoAlignConflict = !isTargetManuallyModified || (currentTarget == detected)
+        if (currentSource == Language.AUTO && shouldAutoAlignConflict) {
+            currentTarget = Language.autoDetectTargetLanguage(englishText, currentTarget)
+        }
+        assertEquals(Language.ZH, currentTarget)
+
+        // 场景 3: 用户将源语言切换回 AUTO 时，重置手动标记并重新自动推导目标语言
+        var newSource = Language.AUTO
+        if (newSource == Language.AUTO) {
+            isTargetManuallyModified = false
+            currentTarget = Language.autoDetectTargetLanguage(englishText, currentTarget)
+        }
+        assertEquals(false, isTargetManuallyModified)
+        assertEquals(Language.ZH, currentTarget)
+    }
 }

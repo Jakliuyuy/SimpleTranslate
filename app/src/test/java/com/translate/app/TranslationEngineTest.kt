@@ -520,16 +520,51 @@ class TranslationEngineTest {
     }
 
     @Test
-    fun testDominantLanguageDetection_CharStats() {
-        val mixedText = "Hello 123 世界！"
-        val stats = Language.analyzeCharStats(mixedText)
-        assertEquals(2, stats.chineseCount) // "世", "界"
-        assertEquals(5, stats.latinCount)   // "Hello"
-        assertEquals(0, stats.kanaCount)
-        assertEquals(0, stats.hangulCount)
+    fun testDominantLanguageDetection_CharStatsAndProportions() {
+        val mixedTextZh = "Hello 123 世界！"
+        val statsZh = Language.analyzeCharStats(mixedTextZh)
+        assertEquals(2, statsZh.chineseCount) // "世", "界"
+        assertEquals(5, statsZh.latinCount)   // "Hello"
+        assertEquals(0, statsZh.kanaCount)
+        assertEquals(0, statsZh.hangulCount)
 
-        // 5 * 1.0 = 5.0, 2 * 2.8 = 5.6 -> 5.6 > 5.0，中文占优
-        assertEquals(Language.ZH, Language.detectLanguage(mixedText))
+        // 2 * 2.8 = 5.6 > 5.0 -> 中文语素加权占优，中译英
+        assertEquals(Language.ZH, Language.detectLanguage(mixedTextZh))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage(mixedTextZh))
+
+        // 英文词汇显著占优场景 (10 个英文字母 vs 2 个汉字: 10 > 5.6 -> 英文占优，英译中)
+        val mixedTextEn = "Hello world 123 世界！"
+        assertEquals(Language.EN, Language.detectLanguage(mixedTextEn))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(mixedTextEn))
+    }
+
+    @Test
+    fun testDominantLanguageDetection_EdgeCases() {
+        // 场景 A: 英文短弹窗 + 状态栏运营商与时间汉字 (21 个英文字母 vs 6 个汉字)
+        val shortEnglishDialogWithStatusBar = "中国移动 上午 9:41\nCamera Error\nRetry later"
+        // 汉字数 = 6 ("中国移动 上午"), 6 * 2.8 = 16.8; 英文字母数 = 21 ("Camera Error Retry later")
+        // 21 > 16.8 -> 稳稳判定为英文，英译中！
+        assertEquals(Language.EN, Language.detectLanguage(shortEnglishDialogWithStatusBar))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(shortEnglishDialogWithStatusBar))
+
+        // 场景 B: 英文长文档中偶然出现 1 个日文假名或韩文符号噪点 (绝不能被误判为日文或韩文)
+        val englishDocWithKanaNoise = "This is a detailed technical architecture report for Android image processing systems. の"
+        assertEquals(Language.EN, Language.detectLanguage(englishDocWithKanaNoise))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(englishDocWithKanaNoise))
+
+        val englishDocWithHangulNoise = "This is a detailed technical architecture report for Android image processing systems. 한"
+        assertEquals(Language.EN, Language.detectLanguage(englishDocWithHangulNoise))
+        assertEquals(Language.ZH, Language.autoDetectTargetLanguage(englishDocWithHangulNoise))
+
+        // 场景 C: 中文长文本包含单个假名噪点 (绝不能被误判为日文)
+        val chineseDocWithKanaNoise = " SimpleTranslate 极简实景排版翻译工具，原生支持 Android 平台多引擎并发调度与贴字覆写。の"
+        assertEquals(Language.ZH, Language.detectLanguage(chineseDocWithKanaNoise))
+        assertEquals(Language.EN, Language.autoDetectTargetLanguage(chineseDocWithKanaNoise))
+
+        // 场景 D: 纯数字与纯符号不篡改当前目标语言
+        val symbolsOnly = "1234567890 !@#$%^&*()_+-="
+        assertEquals(Language.JA, Language.autoDetectTargetLanguage(symbolsOnly, Language.JA))
+        assertEquals(Language.DE, Language.autoDetectTargetLanguage(symbolsOnly, Language.DE))
     }
 }
 
