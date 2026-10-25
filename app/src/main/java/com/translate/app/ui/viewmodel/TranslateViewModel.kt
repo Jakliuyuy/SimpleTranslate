@@ -30,6 +30,10 @@ class TranslateViewModel : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // 当前翻译结果的收藏状态
+    private val _isCurrentResultFavorite = MutableStateFlow(false)
+    val isCurrentResultFavorite: StateFlow<Boolean> = _isCurrentResultFavorite.asStateFlow()
+
     // 语种状态
     private val _sourceLanguage = MutableStateFlow(Language.fromCode(prefRepo.lastSourceLang))
     val sourceLanguage: StateFlow<Language> = _sourceLanguage.asStateFlow()
@@ -100,9 +104,14 @@ class TranslateViewModel : ViewModel() {
         val currentSrc = _sourceLanguage.value
         val currentTgt = _targetLanguage.value
 
-        // 如果源语言是自动检测，交换时转为当前译文语言或目标语言
-        val newSrc = if (currentSrc == Language.AUTO) currentTgt else currentTgt
-        val newTgt = if (currentSrc == Language.AUTO) Language.ZH else currentSrc
+        // 新源语言直接取当前目标语言
+        val newSrc = currentTgt
+        // 若源语言为 AUTO，避免对调后同为中文：若当前目标为中文则对调后目标为英文，反之为中文
+        val newTgt = if (currentSrc == Language.AUTO) {
+            if (currentTgt == Language.ZH) Language.EN else Language.ZH
+        } else {
+            currentSrc
+        }
 
         _sourceLanguage.value = newSrc
         _targetLanguage.value = newTgt
@@ -135,12 +144,19 @@ class TranslateViewModel : ViewModel() {
         )
         _translationResult.value = result
         _isLoading.value = false
+
+        // 检查当前翻译内容在数据库中是否已被收藏
+        val history = repository.getHistory(text)
+        val matched = history.firstOrNull { it.sourceText == text }
+        _isCurrentResultFavorite.value = matched?.isFavorite ?: false
+
         loadHistory()
     }
 
     fun clearInput() {
         _inputText.value = ""
         _translationResult.value = null
+        _isCurrentResultFavorite.value = false
         debounceJob?.cancel()
     }
 
@@ -154,7 +170,11 @@ class TranslateViewModel : ViewModel() {
 
     fun toggleFavorite(record: TranslationRecord) {
         viewModelScope.launch {
-            repository.toggleFavorite(record.id, !record.isFavorite)
+            val newFav = !record.isFavorite
+            repository.toggleFavorite(record.id, newFav)
+            if (_translationResult.value?.originalText == record.sourceText) {
+                _isCurrentResultFavorite.value = newFav
+            }
             loadHistory()
             loadFavorites()
         }
@@ -168,7 +188,11 @@ class TranslateViewModel : ViewModel() {
             val records = repository.getHistory(res.originalText)
             val matched = records.firstOrNull { it.sourceText == res.originalText }
             if (matched != null) {
-                repository.toggleFavorite(matched.id, !matched.isFavorite)
+                val newFav = !matched.isFavorite
+                repository.toggleFavorite(matched.id, newFav)
+                _isCurrentResultFavorite.value = newFav
+            } else {
+                _isCurrentResultFavorite.value = !_isCurrentResultFavorite.value
             }
             loadHistory()
             loadFavorites()
@@ -191,6 +215,15 @@ class TranslateViewModel : ViewModel() {
         }
     }
 
+    fun clearFavorites() {
+        viewModelScope.launch {
+            repository.clearFavorites()
+            _isCurrentResultFavorite.value = false
+            loadHistory()
+            loadFavorites()
+        }
+    }
+
     fun loadHistory(keyword: String = "") {
         viewModelScope.launch {
             _historyList.value = repository.getHistory(keyword)
@@ -207,6 +240,7 @@ class TranslateViewModel : ViewModel() {
         _inputText.value = item.sourceText
         _sourceLanguage.value = Language.fromCode(item.sourceLang)
         _targetLanguage.value = Language.fromCode(item.targetLang)
+        _isCurrentResultFavorite.value = item.isFavorite
         _translationResult.value = TranslationResult(
             originalText = item.sourceText,
             translatedText = item.translatedText,

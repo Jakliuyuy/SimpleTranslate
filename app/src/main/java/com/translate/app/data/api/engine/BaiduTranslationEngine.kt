@@ -31,14 +31,32 @@ class BaiduTranslationEngine(
     companion object {
         private const val VIP_API_URL = "https://fanyi-api.baidu.com/api/trans/vip/translate"
         private const val AI_API_URL = "https://fanyi-api.baidu.com/ait/api/aiTextTranslate"
-    }
 
-    private fun sanitizeKey(key: String): String {
-        val trimmed = key.trim()
-        return if (trimmed.startsWith("keywMHD", ignoreCase = true)) {
-            trimmed.substring(3)
-        } else {
-            trimmed
+        /**
+         * 智能清洗 API 密钥：支持自动去除外层引号、Bearer 前缀、key: 前缀以及粘连的 "key" 字母。
+         */
+        fun sanitizeKey(key: String): String {
+            var result = key.trim()
+            // 剥离外层单双引号
+            if ((result.startsWith("\"") && result.endsWith("\"")) ||
+                (result.startsWith("'") && result.endsWith("'")) ||
+                (result.startsWith("“") && result.endsWith("”"))
+            ) {
+                result = result.substring(1, result.length - 1).trim()
+            }
+            // 剥离 Bearer 前缀
+            if (result.startsWith("Bearer ", ignoreCase = true)) {
+                result = result.substring(7).trim()
+            }
+            // 剥离 key: 或 key= 前缀
+            if (result.startsWith("key:", ignoreCase = true) || result.startsWith("key=", ignoreCase = true)) {
+                result = result.substring(4).trim()
+            }
+            // 剥离粘连的 "key" 前缀 (例如 "keywMHD_...")
+            if (result.length > 20 && result.startsWith("key", ignoreCase = true) && !result.startsWith("key_")) {
+                result = result.substring(3).trim()
+            }
+            return result
         }
     }
 
@@ -78,7 +96,7 @@ class BaiduTranslationEngine(
         val fromCode = from.toBaiduCode()
         val toCode = if (to == Language.AUTO) "zh" else to.toBaiduCode()
 
-        // 优先尝试大模型翻译 API (支持 Bearer Token 鉴权)
+        // 优先尝试大模型翻译 API (基于 Authorization: Bearer Token 鉴权)
         val aiResult = tryAiTranslate(text, fromCode, toCode, appId, secretKey, from, to)
         if (aiResult.isSuccess) {
             return@withContext aiResult
@@ -90,8 +108,29 @@ class BaiduTranslationEngine(
             return@withContext vipResult
         }
 
-        // 如果两者均未成功，返回更具有针对性的错误信息
-        vipResult
+        // 如果两者均未成功，优先展示针对性强、不具误导性的错误提示
+        val combinedError = buildString {
+            val aiMsg = aiResult.errorMessage
+            val vipMsg = vipResult.errorMessage
+            if (!aiMsg.isNullOrBlank() && aiMsg != "大模型翻译未响应") {
+                append("大模型翻译: ").append(aiMsg)
+                if (!vipMsg.isNullOrBlank() && vipMsg != aiMsg) {
+                    append("；通用接口回退: ").append(vipMsg)
+                }
+            } else {
+                append(vipMsg ?: "百度翻译请求失败")
+            }
+        }
+
+        TranslationResult(
+            originalText = text,
+            translatedText = "",
+            sourceLanguage = from,
+            targetLanguage = to,
+            engineType = engineType,
+            isSuccess = false,
+            errorMessage = combinedError
+        )
     }
 
     private fun tryAiTranslate(

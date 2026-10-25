@@ -69,6 +69,7 @@ fun MainTranslateScreen(
     val historyList by viewModel.historyList.collectAsState()
     val fullscreenText by viewModel.fullscreenText.collectAsState()
     val isSpeaking by viewModel.isSpeaking.collectAsState()
+    val isCurrentFavorite by viewModel.isCurrentResultFavorite.collectAsState()
 
     var showSourceSheet by remember { mutableStateOf(false) }
     var showTargetSheet by remember { mutableStateOf(false) }
@@ -157,7 +158,7 @@ fun MainTranslateScreen(
             ResultCard(
                 result = translationResult,
                 isLoading = isLoading,
-                isFavorite = false,
+                isFavorite = isCurrentFavorite,
                 isSpeaking = isSpeaking,
                 onTtsClick = {
                     translationResult?.let { res ->

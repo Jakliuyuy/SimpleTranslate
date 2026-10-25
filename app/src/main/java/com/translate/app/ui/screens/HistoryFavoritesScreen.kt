@@ -17,12 +17,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -85,16 +85,27 @@ fun HistoryFavoritesScreen(
     }
 
     if (showClearDialog) {
+        val isHistoryTab = selectedTab == 0
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
-            title = { Text(if (selectedTab == 0) "清空历史记录" else "清空收藏") },
-            text = { Text("确定要清空全部记录吗？此操作无法撤销。") },
+            title = { Text(if (isHistoryTab) "清空历史记录" else "清空收藏") },
+            text = {
+                Text(
+                    if (isHistoryTab) "确定要清空全部翻译历史吗？已收藏的生词将完好保留。"
+                    else "确定要清空所有收藏的生词记录吗？历史记录将完好保留。"
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.clearHistory(keepFavorites = selectedTab == 0)
+                        if (isHistoryTab) {
+                            viewModel.clearHistory(keepFavorites = true)
+                            Toast.makeText(context, "已清空历史记录", Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.clearFavorites()
+                            Toast.makeText(context, "已清空生词收藏", Toast.LENGTH_SHORT).show()
+                        }
                         showClearDialog = false
-                        Toast.makeText(context, "已清空", Toast.LENGTH_SHORT).show()
                     }
                 ) {
                     Text("清空", color = MaterialTheme.colorScheme.error)
@@ -258,7 +269,7 @@ fun HistoryFavoritesScreen(
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.VolumeUp,
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                                         contentDescription = "朗读",
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(18.dp)

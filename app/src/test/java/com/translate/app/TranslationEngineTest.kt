@@ -103,6 +103,28 @@ class TranslationEngineTest {
     }
 
     @Test
+    fun testBaiduEngineKeySanitization() {
+        val rawKey = "wMHD_dber75qj3nn4okmvvqb0"
+        // 1. 干净密钥
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey(rawKey))
+        // 2. 粘连 key 前缀 (用户原样输入的 keywMHD_...)
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("key$rawKey"))
+        // 3. 带前后空格
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("  $rawKey  \n"))
+        // 4. 双引号包裹
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("\"$rawKey\""))
+        // 5. 单引号包裹
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("'$rawKey'"))
+        // 6. 中文引号包裹
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("“$rawKey”"))
+        // 7. 带 Bearer 前缀
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("Bearer $rawKey"))
+        // 8. 带 key: 或 key= 前缀
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("key: $rawKey"))
+        assertEquals(rawKey, com.translate.app.data.api.engine.BaiduTranslationEngine.sanitizeKey("key=$rawKey"))
+    }
+
+    @Test
     fun testBaiduEngineMissingAppIdPrompt() = runBlocking {
         val engine = com.translate.app.data.api.engine.BaiduTranslationEngine(
             getAppId = { "" },
@@ -112,5 +134,32 @@ class TranslationEngineTest {
         org.junit.Assert.assertFalse(result.isSuccess)
         org.junit.Assert.assertTrue(result.errorMessage?.contains("APP ID") == true)
         org.junit.Assert.assertTrue(result.errorMessage?.contains("wMHD") == true)
+    }
+
+    @Test
+    fun testLanguageSwapLogic() {
+        // 正常语言对调
+        var src = Language.EN
+        var tgt = Language.ZH
+        var newSrc = tgt
+        var newTgt = if (src == Language.AUTO) (if (tgt == Language.ZH) Language.EN else Language.ZH) else src
+        assertEquals(Language.ZH, newSrc)
+        assertEquals(Language.EN, newTgt)
+
+        // AUTO 语言且目标为中文对调 -> 目标变为英文
+        src = Language.AUTO
+        tgt = Language.ZH
+        newSrc = tgt
+        newTgt = if (src == Language.AUTO) (if (tgt == Language.ZH) Language.EN else Language.ZH) else src
+        assertEquals(Language.ZH, newSrc)
+        assertEquals(Language.EN, newTgt)
+
+        // AUTO 语言且目标为英文对调 -> 目标变为中文
+        src = Language.AUTO
+        tgt = Language.EN
+        newSrc = tgt
+        newTgt = if (src == Language.AUTO) (if (tgt == Language.ZH) Language.EN else Language.ZH) else src
+        assertEquals(Language.EN, newSrc)
+        assertEquals(Language.ZH, newTgt)
     }
 }

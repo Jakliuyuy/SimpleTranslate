@@ -70,6 +70,10 @@ class TranslationRepository(
         dbHelper.clearAll(keepFavorites)
     }
 
+    suspend fun clearFavorites() = withContext(Dispatchers.IO) {
+        dbHelper.clearFavorites()
+    }
+
     suspend fun testCurrentEngine(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         engineFactory.getCurrentEngine().testConnection()
     }

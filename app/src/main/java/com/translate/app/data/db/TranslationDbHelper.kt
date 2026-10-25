@@ -108,6 +108,14 @@ class TranslationDbHelper(context: Context) : SQLiteOpenHelper(context, DATABASE
         }
     }
 
+    fun clearFavorites(): Int {
+        val db = writableDatabase
+        val values = ContentValues().apply {
+            put(COLUMN_IS_FAVORITE, 0)
+        }
+        return db.update(TABLE_NAME, values, "$COLUMN_IS_FAVORITE = 1", null)
+    }
+
     fun queryRecords(onlyFavorites: Boolean = false, keyword: String = ""): List<TranslationRecord> {
         val db = readableDatabase
         val selection = StringBuilder()

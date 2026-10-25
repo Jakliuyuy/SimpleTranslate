@@ -15,7 +15,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Translate
@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -61,6 +62,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainAppContainer(viewModel: TranslateViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
+    var onSpeechResultCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
 
     // 语音识别回调
     val speechRecognizerLauncher = rememberLauncherForActivityResult(
@@ -69,7 +71,7 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
             if (!spokenText.isNullOrBlank()) {
-                viewModel.onInputTextChanged(spokenText)
+                onSpeechResultCallback?.invoke(spokenText)
             }
         }
     }
@@ -86,7 +88,8 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
         }
     }
 
-    fun launchVoiceInput(targetLang: Language) {
+    fun launchVoiceInput(targetLang: Language, onResult: (String) -> Unit) {
+        onSpeechResultCallback = onResult
         startSpeechRecognition(
             launcher = speechRecognizerLauncher,
             language = targetLang
@@ -114,7 +117,7 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "对话") },
+                    icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "对话") },
                     label = { Text("对话") },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -158,11 +161,17 @@ fun MainAppContainer(viewModel: TranslateViewModel) {
             when (selectedTab) {
                 0 -> MainTranslateScreen(
                     viewModel = viewModel,
-                    onVoiceInputClick = { launchVoiceInput(viewModel.sourceLanguage.value) }
+                    onVoiceInputClick = {
+                        launchVoiceInput(viewModel.sourceLanguage.value) { spoken ->
+                            viewModel.onInputTextChanged(spoken)
+                        }
+                    }
                 )
                 1 -> ConversationScreen(
                     viewModel = viewModel,
-                    onVoiceInputForLanguage = { lang -> launchVoiceInput(lang) }
+                    onVoiceInputForLanguage = { lang, onResult ->
+                        launchVoiceInput(lang, onResult)
+                    }
                 )
                 2 -> HistoryFavoritesScreen(
                     viewModel = viewModel,

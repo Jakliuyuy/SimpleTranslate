@@ -18,10 +18,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,7 +63,7 @@ data class ConversationMessage(
 @Composable
 fun ConversationScreen(
     viewModel: TranslateViewModel,
-    onVoiceInputForLanguage: (Language) -> Unit,
+    onVoiceInputForLanguage: (Language, (String) -> Unit) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -251,7 +251,7 @@ fun ConversationScreen(
                                     modifier = Modifier.size(28.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Default.VolumeUp,
+                                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                                         contentDescription = "朗读",
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(18.dp)
@@ -300,7 +300,7 @@ fun ConversationScreen(
                     .background(MaterialTheme.colorScheme.primary)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Send,
+                    imageVector = Icons.AutoMirrored.Filled.Send,
                     contentDescription = "发送",
                     tint = Color.White
                 )
@@ -320,7 +320,11 @@ fun ConversationScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.clickable {
                     activeSpeakerIsA = true
-                    onVoiceInputForLanguage(langA)
+                    onVoiceInputForLanguage(langA) { spoken ->
+                        if (spoken.isNotBlank()) {
+                            sendMessage(spoken, isA = true)
+                        }
+                    }
                 }
             ) {
                 Surface(
@@ -351,7 +355,11 @@ fun ConversationScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.clickable {
                     activeSpeakerIsA = false
-                    onVoiceInputForLanguage(langB)
+                    onVoiceInputForLanguage(langB) { spoken ->
+                        if (spoken.isNotBlank()) {
+                            sendMessage(spoken, isA = false)
+                        }
+                    }
                 }
             ) {
                 Surface(
