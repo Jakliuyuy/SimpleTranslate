@@ -54,38 +54,63 @@ object ImageBitmapRenderer {
             val expWidth = max(10, expRect.width())
             val expHeight = max(10, expRect.height())
 
-            // 绘制 100% 完全不透明背景圆角遮罩 (alpha = 255，彻底杜绝文字透过重叠乱码)
+            // 1. 绘制 100% 完全不透明背景遮罩覆盖层 (alpha = 255，彻底杜绝文字透过重叠乱码)
             bgPaint.color = block.backgroundColor
             bgPaint.alpha = ImageOverlayHelper.MASK_ALPHA
-            val cornerRadius = min(expWidth, expHeight) * 0.06f
-            canvas.drawRoundRect(
-                RectF(expRect.left.toFloat(), expRect.top.toFloat(), expRect.right.toFloat(), expRect.bottom.toFloat()),
-                cornerRadius,
-                cornerRadius,
-                bgPaint
-            )
+
+            // 原文彻底擦除：优先按行 (lines) 精确覆盖每一个文本行，绝不溢出污染气泡外空白区
+            if (block.lineBoxes.isNotEmpty()) {
+                for (lBox in block.lineBoxes) {
+                    val expLine = ImageOverlayHelper.expandOverlayRect(
+                        rect = lBox,
+                        outsetX = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                        outsetY = ImageOverlayHelper.DEFAULT_OUTSET_PX,
+                        maxWidth = originalBitmap.width,
+                        maxHeight = originalBitmap.height
+                    )
+                    val lineCornerRadius = min(expLine.width, expLine.height) * 0.12f
+                    canvas.drawRoundRect(
+                        RectF(expLine.left.toFloat(), expLine.top.toFloat(), expLine.right.toFloat(), expLine.bottom.toFloat()),
+                        lineCornerRadius,
+                        lineCornerRadius,
+                        bgPaint
+                    )
+                }
+            } else {
+                val cornerRadius = min(expWidth, expHeight) * 0.06f
+                canvas.drawRoundRect(
+                    RectF(expRect.left.toFloat(), expRect.top.toFloat(), expRect.right.toFloat(), expRect.bottom.toFloat()),
+                    cornerRadius,
+                    cornerRadius,
+                    bgPaint
+                )
+            }
 
             // 2. 自适应计算文本排版（基于原行数与行高动态自适应，左对齐自然向下排布）
-            val paddingH = max(2f, expWidth * 0.03f)
-            val paddingV = max(2f, expHeight * 0.03f)
+            // 严格对齐：内边距微量恒定 (2px)，确保译文左边界与原文字左边界精确一一对应
+            val paddingH = 2f
+            val paddingV = 2f
             val availWidth = max(8, (expWidth - paddingH * 2).toInt())
             val availHeight = max(8f, expHeight - paddingV * 2)
 
             val origLineCount = max(1, block.lineBoxes.size)
-            val avgLineHeight = expHeight.toFloat() / origLineCount
-            val lineBasedSize = if (origLineCount > 1) {
-                (avgLineHeight * 0.72f).coerceIn(12f, expHeight * 0.85f)
-            } else {
-                min(expHeight * 0.75f, expWidth * 0.85f).coerceAtLeast(10f)
-            }
-
-            var textSize = max(lineBasedSize, min(expHeight * 0.75f, expWidth * 0.85f)).coerceIn(10f, 120f)
-            val minTextSize = 10f
-
             val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = block.textColor
                 isFakeBoldText = true
             }
+
+            // 调用 ImageOverlayHelper.calculateAutoFitFontSize 动态估算基准字号
+            val targetBaseSize = ImageOverlayHelper.calculateAutoFitFontSize(
+                text = displayText,
+                boxWidth = availWidth.toFloat(),
+                boxHeight = availHeight,
+                lineCount = origLineCount,
+                maxFontSize = 100f,
+                minFontSize = 10f
+            )
+
+            var textSize = min(targetBaseSize * 1.15f, 100f)
+            val minTextSize = 10f
 
             var bestLayout: StaticLayout? = null
             while (textSize >= minTextSize) {
@@ -93,35 +118,53 @@ object ImageBitmapRenderer {
                 val layout = StaticLayout.Builder.obtain(displayText, 0, displayText.length, textPaint, availWidth)
                     .setAlignment(Layout.Alignment.ALIGN_NORMAL) // 自然左对齐
                     .setIncludePad(false)
-                    .setLineSpacing(0f, 1.08f)
+                    .setLineSpacing(0f, 1.15f)
                     .build()
 
                 if (layout.height <= availHeight) {
                     bestLayout = layout
                     break
                 }
-                val step = if (textSize > 64f) 6f else if (textSize > 32f) 3f else 1.5f
+                val step = if (textSize > 48f) 4f else if (textSize > 24f) 2f else 1f
                 textSize -= step
             }
 
-            if (bestLayout == null) {
+            val finalLayout = bestLayout ?: run {
                 textPaint.textSize = minTextSize
-                bestLayout = StaticLayout.Builder.obtain(displayText, 0, displayText.length, textPaint, availWidth)
+                StaticLayout.Builder.obtain(displayText, 0, displayText.length, textPaint, availWidth)
                     .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                     .setIncludePad(false)
-                    .setLineSpacing(0f, 1.08f)
+                    .setLineSpacing(0f, 1.15f)
                     .build()
             }
 
-            // 3. 严格边界裁剪与自然左对齐排布
-            val isSingleLine = bestLayout.lineCount == 1
-            val relY = ImageOverlayHelper.computeVerticalOffset(availHeight, bestLayout.height.toFloat(), paddingV, isSingleLine)
+            // 3. 垂直方向：根据原图是否是多行段落及框高富余程度判断。多行段落紧贴顶部自然向下排布，单行居中
+            val shouldAlignTop = ImageOverlayHelper.shouldAlignTop(origLineCount, expHeight.toFloat(), finalLayout.height.toFloat())
+            val relY = ImageOverlayHelper.computeVerticalOffset(availHeight, finalLayout.height.toFloat(), paddingV, !shouldAlignTop)
             val offsetY = expRect.top + relY
 
+            // 译文底色覆写：确保译文实际占用区域有完整背景色
+            val layoutW = finalLayout.width.toFloat()
+            val layoutH = finalLayout.height.toFloat()
+            val textBgLeft = expRect.left.toFloat()
+            val textBgTop = expRect.top.toFloat() + relY - paddingV
+            val textBgRight = min(expRect.right.toFloat(), textBgLeft + layoutW + paddingH * 2)
+            val textBgBottom = min(expRect.bottom.toFloat(), textBgTop + layoutH + paddingV * 2)
+            if (textBgRight > textBgLeft && textBgBottom > textBgTop) {
+                val textCornerRadius = min(textBgRight - textBgLeft, textBgBottom - textBgTop) * 0.08f
+                canvas.drawRoundRect(
+                    RectF(textBgLeft, textBgTop, textBgRight, textBgBottom),
+                    textCornerRadius,
+                    textCornerRadius,
+                    bgPaint
+                )
+            }
+
+            // 严格边界裁剪与自然左对齐排布
             canvas.save()
             canvas.clipRect(expRect.left.toFloat(), expRect.top.toFloat(), expRect.right.toFloat(), expRect.bottom.toFloat())
             canvas.translate(expRect.left + paddingH, offsetY)
-            bestLayout.draw(canvas)
+            finalLayout.draw(canvas)
             canvas.restore()
         }
 

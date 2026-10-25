@@ -55,11 +55,6 @@ object OcrManager {
 
                         // 1. 提取所有 lines 的精准包围盒
                         val lineOverlayBoxes = mutableListOf<com.translate.app.data.model.OverlayRect>()
-                        var minLeft = Int.MAX_VALUE
-                        var minTop = Int.MAX_VALUE
-                        var maxRight = Int.MIN_VALUE
-                        var maxBottom = Int.MIN_VALUE
-
                         for (line in textBlock.lines) {
                             val lBox = line.boundingBox ?: continue
                             val safeLBox = Rect(
@@ -69,28 +64,23 @@ object OcrManager {
                                 lBox.bottom.coerceIn(0, bitmap.height)
                             )
                             if (safeLBox.width() > 0 && safeLBox.height() > 0) {
-                                minLeft = minOf(minLeft, safeLBox.left)
-                                minTop = minOf(minTop, safeLBox.top)
-                                maxRight = maxOf(maxRight, safeLBox.right)
-                                maxBottom = maxOf(maxBottom, safeLBox.bottom)
                                 lineOverlayBoxes.add(com.translate.app.data.model.OverlayRect.fromAndroidRect(safeLBox))
                             }
                         }
 
                         // 2. 优先采用真实行包围盒聚合得到的紧凑包围盒 (Compact Box)
                         // 彻底解决短消息气泡遮罩比原气泡宽、溢出到空白区的问题，同时紧密完全包含长文本所有行
-                        val compactBox = if (minLeft < maxRight && minTop < maxBottom) {
-                            Rect(minLeft, minTop, maxRight, maxBottom)
-                        } else {
-                            textBlock.boundingBox?.let { b ->
-                                Rect(
-                                    b.left.coerceIn(0, bitmap.width),
-                                    b.top.coerceIn(0, bitmap.height),
-                                    b.right.coerceIn(0, bitmap.width),
-                                    b.bottom.coerceIn(0, bitmap.height)
-                                )
-                            } ?: Rect(0, 0, 10, 10)
-                        }
+                        val fallbackBox = textBlock.boundingBox?.let { b ->
+                            com.translate.app.data.model.OverlayRect(
+                                b.left.coerceIn(0, bitmap.width),
+                                b.top.coerceIn(0, bitmap.height),
+                                b.right.coerceIn(0, bitmap.width),
+                                b.bottom.coerceIn(0, bitmap.height)
+                            )
+                        } ?: com.translate.app.data.model.OverlayRect(0, 0, 10, 10)
+
+                        val compactOverlay = ImageOverlayHelper.computeCompactBoundingBox(lineOverlayBoxes, fallbackBox)
+                        val compactBox = compactOverlay.toAndroidRect()
 
                         if (compactBox.width() <= 0 || compactBox.height() <= 0) continue
 

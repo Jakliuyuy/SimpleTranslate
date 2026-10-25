@@ -173,6 +173,17 @@ object ImageOverlayHelper {
     }
 
     /**
+     * 判断当前文本块是否应该采用顶部对齐：
+     * - 原图包含多行 (origLineCount > 1) 的段落，或者可用高度显著高于单行排版高度的大文本框，必须从顶部对齐自然向下排布；
+     * - 杜绝因译文仅 1 行而被错误居中抛到框底中间导致位置完全脱节的 Bug。
+     */
+    fun shouldAlignTop(origLineCount: Int, boxHeight: Float, layoutHeight: Float): Boolean {
+        if (origLineCount > 1) return true
+        if (boxHeight > 45f && boxHeight >= layoutHeight * 1.35f) return true
+        return false
+    }
+
+    /**
      * 计算文字排版的垂直相对偏移：
      * - 多行段落从框顶部对齐（保持微量内边距），自然向右向下排布，杜绝垂直强制居中导致的上下大片悬空；
      * - 单行短文本垂直居中更端正美观。
@@ -191,14 +202,47 @@ object ImageOverlayHelper {
     }
 
     /**
-     * 规范化段落文本：去除段落内部孤立的硬断行，使多行文本能够根据可用宽度自然折行，释放垂直排版空间
+     * 规范化段落文本：去除段落内部孤立的硬断行，使多行文本能够根据可用宽度自然折行，释放垂直排版空间。
+     * 智能识别中日韩 (CJK) 表意汉字与西方单词：
+     * - 汉字与汉字、汉字与标点之间相连自然平滑拼接，绝不硬塞破坏连贯性的空格；
+     * - 西文单词之间保留必要的半角空格。
      */
     fun normalizeParagraphText(text: String): String {
         if (!text.contains("\n")) return text.trim()
         val paragraphs = text.split(Regex("\n{2,}"))
         return paragraphs.joinToString("\n\n") { p ->
-            p.lines().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" ")
+            val lines = p.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            if (lines.size <= 1) return@joinToString lines.firstOrNull() ?: ""
+            val sb = StringBuilder()
+            for (i in lines.indices) {
+                if (i > 0) {
+                    val prevLastChar = lines[i - 1].last()
+                    val currFirstChar = lines[i].first()
+                    if (isCjk(prevLastChar) || isCjk(currFirstChar)) {
+                        // CJK 汉字或全角标点，不插入空格
+                    } else {
+                        // 西文字符或单词，插入一个空格
+                        sb.append(' ')
+                    }
+                }
+                sb.append(lines[i])
+            }
+            sb.toString()
         }.trim()
+    }
+
+    /**
+     * 判断字符是否属于 CJK（中日韩统一表意文字）及全角标点符号集
+     */
+    fun isCjk(c: Char): Boolean {
+        val ub = Character.UnicodeBlock.of(c)
+        return ub == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
+                ub == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A ||
+                ub == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B ||
+                ub == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS ||
+                ub == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION ||
+                ub == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS ||
+                ub == Character.UnicodeBlock.GENERAL_PUNCTUATION
     }
 
     /**
@@ -213,18 +257,26 @@ object ImageOverlayHelper {
         minFontSize: Float = 10f
     ): Float {
         if (text.isBlank() || boxWidth <= 0f || boxHeight <= 0f) return minFontSize
+        val origLines = max(1, lineCount)
+        val avgLineHeight = boxHeight / origLines.toFloat()
+
+        // 1. 基准行高字号：根据原图实际行高锚定视觉比例
+        val lineBasedSize = if (origLines > 1) {
+            (avgLineHeight * 0.72f).coerceIn(12f, boxHeight * 0.85f)
+        } else {
+            min(boxHeight * 0.75f, boxWidth * 0.85f).coerceAtLeast(minFontSize)
+        }
+
+        // 2. 面积容量预估
         val charCount = max(1, text.length)
-        // 估算：长宽面积与字符数量的关系
         val areaPerChar = (boxWidth * boxHeight) / charCount.toFloat()
         val estimatedSize = kotlin.math.sqrt(areaPerChar.toDouble()).toFloat() * 0.85f
 
-        // 若多行段落，结合平均行高动态适配，让译文自然舒展填满原文字区域
-        val effectiveEstimated = if (lineCount > 1) {
-            val avgLineHeight = boxHeight / lineCount.toFloat()
-            val targetSizeByLine = avgLineHeight * 0.72f
-            max(estimatedSize, targetSizeByLine)
+        // 3. 动态平滑融合：多行段落严格限制在合理字号区间，杜绝短文本暴增与长文本缩微
+        val effectiveEstimated = if (origLines > 1) {
+            min(max(lineBasedSize, estimatedSize), lineBasedSize * 1.25f)
         } else {
-            estimatedSize
+            min(estimatedSize, lineBasedSize)
         }
 
         val upperLimit = min(maxFontSize, boxHeight * 0.85f)
@@ -246,46 +298,58 @@ object ImageOverlayHelper {
     }
 
     /**
-     * 智能采样原图指定矩形边缘的平均背景颜色
+     * 智能采样原图指定矩形边缘的平均背景颜色（采用众数桶过滤算法 Dominant Color Extraction）
+     * 彻底剔除文字前景色墨迹与抗锯齿污染，杜绝背景变脏灰和灰色遮罩色块溢出
      */
     fun sampleBackgroundColor(bitmap: Bitmap, rect: Rect): Int {
-        val left = rect.left.coerceIn(0, bitmap.width - 1)
-        val right = rect.right.coerceIn(0, bitmap.width - 1)
-        val top = rect.top.coerceIn(0, bitmap.height - 1)
-        val bottom = rect.bottom.coerceIn(0, bitmap.height - 1)
-        if (left >= right || top >= bottom) return -1 // White 0xFFFFFFFF
+        val bWidth = bitmap.width
+        val bHeight = bitmap.height
+        if (bWidth <= 0 || bHeight <= 0) return -1
 
+        // 沿包围盒外围 1 像素采样，避免直接踩在字符字形的墨迹边缘上
+        val left = (rect.left - 1).coerceIn(0, bWidth - 1)
+        val right = (rect.right + 1).coerceIn(0, bWidth - 1)
+        val top = (rect.top - 1).coerceIn(0, bHeight - 1)
+        val bottom = (rect.bottom + 1).coerceIn(0, bHeight - 1)
+        if (left >= right || top >= bottom) return -1
+
+        val sampledColors = mutableListOf<Int>()
+        val stepX = max(1, (right - left) / 10)
+        val stepY = max(1, (bottom - top) / 10)
+
+        for (x in left..right step stepX) {
+            sampledColors.add(bitmap.getPixel(x, top))
+            sampledColors.add(bitmap.getPixel(x, bottom))
+        }
+        for (y in top..bottom step stepY) {
+            sampledColors.add(bitmap.getPixel(left, y))
+            sampledColors.add(bitmap.getPixel(right, y))
+        }
+
+        if (sampledColors.isEmpty()) return -1
+
+        // 众数桶聚类：按高 4 位（16 级灰度）量化颜色
+        val buckets = HashMap<Int, MutableList<Int>>()
+        for (color in sampledColors) {
+            val rBucket = extractRed(color) shr 4
+            val gBucket = extractGreen(color) shr 4
+            val bBucket = extractBlue(color) shr 4
+            val key = (rBucket shl 8) or (gBucket shl 4) or bBucket
+            buckets.getOrPut(key) { mutableListOf() }.add(color)
+        }
+
+        // 选取频次最高的颜色簇（背景色占绝大多数采样点）
+        val dominantColors = buckets.values.maxByOrNull { it.size } ?: sampledColors
         var rSum = 0L
         var gSum = 0L
         var bSum = 0L
-        var count = 0
-
-        // 沿矩形四周边缘采样
-        val stepX = max(1, (right - left) / 8)
-        val stepY = max(1, (bottom - top) / 8)
-
-        for (x in left..right step stepX) {
-            val pTop = bitmap.getPixel(x, top)
-            val pBottom = bitmap.getPixel(x, bottom)
-            rSum += extractRed(pTop) + extractRed(pBottom)
-            gSum += extractGreen(pTop) + extractGreen(pBottom)
-            bSum += extractBlue(pTop) + extractBlue(pBottom)
-            count += 2
+        for (c in dominantColors) {
+            rSum += extractRed(c)
+            gSum += extractGreen(c)
+            bSum += extractBlue(c)
         }
-        for (y in top..bottom step stepY) {
-            val pLeft = bitmap.getPixel(left, y)
-            val pRight = bitmap.getPixel(right, y)
-            rSum += extractRed(pLeft) + extractRed(pRight)
-            gSum += extractGreen(pLeft) + extractGreen(pRight)
-            bSum += extractBlue(pLeft) + extractBlue(pRight)
-            count += 2
-        }
-
-        if (count == 0) return -1
-        val avgR = (rSum / count).toInt()
-        val avgG = (gSum / count).toInt()
-        val avgB = (bSum / count).toInt()
-        return makeRgb(avgR, avgG, avgB)
+        val count = dominantColors.size
+        return makeRgb((rSum / count).toInt(), (gSum / count).toInt(), (bSum / count).toInt())
     }
 
     /**

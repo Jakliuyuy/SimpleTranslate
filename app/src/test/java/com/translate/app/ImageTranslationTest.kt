@@ -507,15 +507,48 @@ class ImageTranslationTest {
 
     @Test
     fun testNormalizeParagraphText() {
-        // 孤立换行连贯排版
+        // 1. 孤立英文换行连贯排版（单词间补充空格）
         val rawOcrText = "This is a sentence\nthat was broken across\nmultiple lines."
         val normalized = ImageOverlayHelper.normalizeParagraphText(rawOcrText)
         assertEquals("This is a sentence that was broken across multiple lines.", normalized)
 
-        // 多段落双换行保留
+        // 2. 中文 CJK 换行连贯排版（汉字间自然相接，严禁插入空格）
+        val chineseOcrText = "这是一段非常长的中文描述文字\n被断成了两行显示"
+        val normalizedChinese = ImageOverlayHelper.normalizeParagraphText(chineseOcrText)
+        assertEquals("这是一段非常长的中文描述文字被断成了两行显示", normalizedChinese)
+
+        // 3. 多段落双换行保留
         val multiParagraph = "Paragraph one line 1\nline 2\n\nParagraph two line 1\nline 2"
         val normalizedMulti = ImageOverlayHelper.normalizeParagraphText(multiParagraph)
         assertTrue(normalizedMulti.contains("Paragraph one line 1 line 2"))
         assertTrue(normalizedMulti.contains("Paragraph two line 1 line 2"))
+    }
+
+    @Test
+    fun testShouldAlignTopParagraphDetection() {
+        // 1. 原图为多行段落 (origLineCount = 3)，即使译文仅 1 行 (layoutHeight = 30)，也必须顶部对齐
+        assertTrue(ImageOverlayHelper.shouldAlignTop(origLineCount = 3, boxHeight = 150f, layoutHeight = 30f))
+
+        // 2. 原图为单行 (origLineCount = 1) 且框高很小 (boxHeight = 35f, layoutHeight = 30f)，居中端正排布
+        assertFalse(ImageOverlayHelper.shouldAlignTop(origLineCount = 1, boxHeight = 35f, layoutHeight = 30f))
+
+        // 3. 原图为单行 (origLineCount = 1) 但框高度极大 (boxHeight = 120f, layoutHeight = 30f)，富余高度下采用顶部排布
+        assertTrue(ImageOverlayHelper.shouldAlignTop(origLineCount = 1, boxHeight = 120f, layoutHeight = 30f))
+    }
+
+    @Test
+    fun testAutoFitFontSizeBoundedGrowth() {
+        // 短文本在大框中字号不能无限暴涨成大怪兽
+        val shortText = "确定"
+        val autoFitSize = ImageOverlayHelper.calculateAutoFitFontSize(
+            text = shortText,
+            boxWidth = 300f,
+            boxHeight = 100f,
+            lineCount = 2,
+            maxFontSize = 100f,
+            minFontSize = 10f
+        )
+        // 平均行高 50f，基准 36f，最大不超过 36 * 1.25 = 45f
+        assertTrue("Short text size in 2-line box should be capped around line height", autoFitSize <= 45f)
     }
 }
